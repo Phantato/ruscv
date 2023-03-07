@@ -1,0 +1,39 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "custom",
+            "name": "Debug Release Kernel",
+            "preLaunchTask": "Debug Prepare",
+            "targetCreateCommands": [
+                "target create target/riscv64gc-unknown-none-elf/release/kernel"
+            ],
+            "processCreateCommands": [
+                "gdb-remote 1234",
+                "c"
+            ],
+            "sourceLanguages": [
+                "rust"
+            ],
+        },
+        {
+            "type": "lldb",
+            "request": "custom",
+            "name": "Debug Loader",
+            "preLaunchTask": "Debug Prepare",
+            "targetCreateCommands": [
+                "target create target/riscv64gc-unknown-none-elf/release/kernel"
+            ],
+            "processCreateCommands": [
+                "gdb-remote 1234",
+            ],
+            "sourceLanguages": [
+                "rust"
+            ],
+        },
+    ]
+}

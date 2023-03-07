@@ -1,0 +1,93 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Compile",
+            "type": "shell",
+            "group": "build",
+            "command": "make",
+            "options": {
+                "env": {
+                    "BSP": "virt"
+                }
+            }
+        },
+        {
+            "label": "Serial Output",
+            "type": "shell",
+            "command": "telnet",
+            "args": [
+                "localhost",
+                "1235"
+            ],
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "custom",
+                "pattern": [
+                    {
+                        "regexp": "^__________$",
+                        "file": 1,
+                        "location": 1,
+                        "message": 1
+                    },
+                ],
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^Trying",
+                    "endsPattern": "^Connected to"
+                }
+            }
+        },
+        {
+            "label": "Debug Launch",
+            "type": "shell",
+            "dependsOn": [
+                "Compile"
+            ],
+            "command": "qemu-system-riscv64",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "custom",
+                "pattern": [
+                    {
+                        "regexp": "^__________$",
+                        "file": 1,
+                        "line": 1,
+                        "column": 1,
+                        "message": 1
+                    },
+                ],
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "QEMU 7.1.0 monitor",
+                    "endsPattern": "(qemu)"
+                }
+            },
+            "args": [
+                "-s",
+                "-S",
+                "-M",
+                "virt",
+                "-net",
+                "none",
+                "--cpu",
+                "rv64",
+                "--nographic",
+                "-bios",
+                "rustsbi/rustsbi-qemu",
+                "-serial",
+                "telnet::1235,server",
+                "-device",
+                "loader,file=kernel,addr=0x80200000",
+            ]
+        },
+        {
+            "label": "Debug Prepare",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Debug Launch",
+                "Serial Output"
+            ]
+        }
+    ]
+}

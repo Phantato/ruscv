@@ -1,0 +1,11 @@
+[package]
+name = "ruscv_kernel"
+version = "0.1.0"
+
+[profile.release]
+lto = true
+debug = 1
+
+[[bin]]
+name = "kernel"
+path = "src/main.rs"
