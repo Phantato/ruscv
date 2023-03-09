@@ -9,3 +9,11 @@ debug = 1
 [[bin]]
 name = "kernel"
 path = "src/main.rs"
+
+[features]
+default   = ["log-error"]
+log-error = []
+log-warn  = ["log-error"]
+log-info  = ["log-warn"]
+log-debug = ["log-info"]
+log-trace = ["log-debug"]

@@ -8,7 +8,7 @@
             "command": "make",
             "options": {
                 "env": {
-                    "BSP": "virt"
+                    "LOG": "TRACE"
                 }
             }
         },
@@ -72,6 +72,8 @@
                 "none",
                 "--cpu",
                 "rv64",
+                "-smp",
+                "4",
                 "--nographic",
                 "-bios",
                 "rustsbi/rustsbi-qemu",

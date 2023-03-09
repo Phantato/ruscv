@@ -4,6 +4,9 @@
     100
   ],
   "rust-analyzer.cargo.target": "riscv64gc-unknown-none-elf",
+  "rust-analyzer.check.features": [
+    "log-trace"
+  ],
   "rust-analyzer.checkOnSave.allTargets": false,
   "rust-analyzer.checkOnSave.extraArgs": [
     "--bins"

@@ -9,6 +9,8 @@
 include utils.mk
 
 TARGET = riscv64gc-unknown-none-elf
+LOG ?= ERROR
+LOG_LEVEL = $(shell echo ${LOG} | tr '[:upper:]' '[:lower:]')
 ##--------------------------------------------------------------------------------------------------
 ## BSP-specific configuration values
 ##--------------------------------------------------------------------------------------------------
@@ -37,7 +39,8 @@ CFLAG = \
 RUSTFLAGS_PEDANTIC = ${CFLAG}     \
 	-D warnings
 
-COMPILER_ARGS = --target=$(TARGET) --release
+COMPILER_ARGS = --target=$(TARGET) --release \
+	--features log-${LOG_LEVEL}
 
 RUSTC_CMD   = cargo rustc $(COMPILER_ARGS) -p ruscv_kernel
 DOC_CMD     = cargo doc $(COMPILER_ARGS)
