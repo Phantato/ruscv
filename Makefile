@@ -1,50 +1,17 @@
-## SPDX-License-Identifier: MIT OR Apache-2.0
-##
-## Copyright (c) 2018-2022 Andre Richter <andre.o.richter@gmail.com>
-
-##--------------------------------------------------------------------------------------------------
-## Optional, user-provided configuration values
-##--------------------------------------------------------------------------------------------------
 
 include utils.mk
 
 TARGET = riscv64gc-unknown-none-elf
-LOG ?= ERROR
-LOG_LEVEL = $(shell echo ${LOG} | tr '[:upper:]' '[:lower:]')
-##--------------------------------------------------------------------------------------------------
-## BSP-specific configuration values
-##--------------------------------------------------------------------------------------------------
+TARGET_DIR := target/$(TARGET)/release
 
-
-##--------------------------------------------------------------------------------------------------
-## Targets and Prerequisites
-##--------------------------------------------------------------------------------------------------
-KERNEL_DIR        = kernel
-KERNEL_MANIFEST   = ${KERNEL_DIR}/Cargo.toml
-KERNEL_ELF        = target/$(TARGET)/release/kernel
-KERNEL_BIN        = kernel.bin
-RUSTSBI_BIN       = rustsbi/rustsbi-qemu
-LAST_BUILD_CONFIG = target/build_config
-# This parses cargo's dep-info file.
-# https://doc.rust-lang.org/cargo/guide/build-cache.html#dep-info-files
-KERNEL_ELF_DEPS = $(filter-out %: ,$(file < $(KERNEL_ELF).d)) $(KERNEL_MANIFEST) $(LAST_BUILD_CONFIG)
-
-##--------------------------------------------------------------------------------------------------
-## Command building blocks
-##--------------------------------------------------------------------------------------------------
-CFLAG = \
-	-C link-arg=-T${KERNEL_DIR}/src/kernel.ld \
+COMPILER_ARGS = -D warnings		\
 	-C force-frame-pointers=yes
 
-RUSTFLAGS_PEDANTIC = ${CFLAG}     \
-	-D warnings
+COMPILER_FLAG := --target=$(TARGET) --release
 
-COMPILER_ARGS = --target=$(TARGET) --release \
-	--features log-${LOG_LEVEL}
-
-RUSTC_CMD   = cargo rustc $(COMPILER_ARGS) -p ruscv_kernel
-DOC_CMD     = cargo doc $(COMPILER_ARGS)
-CLIPPY_CMD  = cargo clippy $(COMPILER_ARGS)
+RUSTC_CMD   = cargo rustc $(COMPILER_FLAG)
+DOC_CMD     = cargo doc $(COMPILER_FLAG)
+CLIPPY_CMD  = cargo clippy $(COMPILER_FLAG)
 OBJCOPY_CMD = rust-objcopy \
     --strip-all            \
     -O binary
@@ -53,49 +20,26 @@ OBJDUMP_BINARY = llvm-objdump
 NM_BINARY      = llvm-nm
 READELF_BINARY = llvm-readelf
 
-QEMU_CMD    = qemu-system-riscv64 -M virt -cpu rv64 -s -S --nographic -bios ${RUSTSBI_BIN}
+RUSTSBI_BIN       = rustsbi/rustsbi-qemu
+QEMU_CMD    = qemu-system-riscv64 -M virt -s -S --nographic \
+	-cpu rv64 -smp 1 -net none 								\
+	-bios ${RUSTSBI_BIN} 									\
+	-serial telnet::1235,server
 QEMU_LOADER = -device loader,file=${KERNEL_BIN},addr=0x80200000
 
 
-##--------------------------------------------------------------------------------------------------
-## Targets
-##--------------------------------------------------------------------------------------------------
-.PHONY: all doc qemu miniterm clippy clean readelf objdump nm check
+include user/Makefile
+include kernel/Makefile
 
-all: $(KERNEL_BIN)
+.PHONY: kernel clean qemu lldb clippy readelf objdump nm
 
-##------------------------------------------------------------------------------
-## Save the configuration as a file, so make understands if it changed.
-##------------------------------------------------------------------------------
-$(LAST_BUILD_CONFIG):
-	@rm -f ${LAST_BUILD_CONFIG}
-	@mkdir -p target
-	@touch $(LAST_BUILD_CONFIG)
+kernel: ${KERNEL_BIN}
 
 ##------------------------------------------------------------------------------
-## Compile the kernel ELF
+## Clean
 ##------------------------------------------------------------------------------
-$(KERNEL_ELF): $(KERNEL_ELF_DEPS)
-	$(call color_header, "Compiling kernel ELF")
-	@RUSTFLAGS="$(RUSTFLAGS_PEDANTIC)" $(RUSTC_CMD)
-
-##------------------------------------------------------------------------------
-## Generate the stripped kernel binary
-##------------------------------------------------------------------------------
-$(KERNEL_BIN): $(KERNEL_ELF)
-	$(call color_header, "Generating stripped binary")
-	@$(OBJCOPY_CMD) $(KERNEL_ELF) $(KERNEL_BIN)
-	$(call color_progress_prefix, "Name")
-	@echo $(KERNEL_BIN)
-	$(call color_progress_prefix, "Size")
-	$(call disk_usage_KiB, $(KERNEL_BIN))
-
-##------------------------------------------------------------------------------
-## Generate the documentation
-##------------------------------------------------------------------------------
-doc:
-	$(call color_header, "Generating docs")
-	@$(DOC_CMD) --document-private-items --open
+clean:
+	rm -rf target $(KERNEL_BIN)
 
 ##------------------------------------------------------------------------------
 ## Run the kernel in QEMU
@@ -116,12 +60,6 @@ lldb: qemu
 ##------------------------------------------------------------------------------
 clippy:
 	@RUSTFLAGS="$(RUSTFLAGS_PEDANTIC)" $(CLIPPY_CMD)
-
-##------------------------------------------------------------------------------
-## Clean
-##------------------------------------------------------------------------------
-clean:
-	rm -rf target $(KERNEL_BIN)
 
 ##------------------------------------------------------------------------------
 ## Run readelf

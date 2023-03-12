@@ -1,10 +1,11 @@
 [package]
 name = "ruscv_kernel"
 version = "0.1.0"
+edition = "2021"
 
-[profile.release]
-lto = true
-debug = 1
+[dependencies]
+riscv = { git = "https://github.com/rcore-os/riscv", features = ["inline-asm"] }
+lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 
 [[bin]]
 name = "kernel"

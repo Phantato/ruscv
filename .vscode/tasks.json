@@ -6,9 +6,12 @@
             "type": "shell",
             "group": "build",
             "command": "make",
+            "args": [
+                "kernel"
+            ],
             "options": {
                 "env": {
-                    "LOG": "TRACE"
+                    "KERNEL_LOG": "TRACE"
                 }
             }
         },
@@ -44,7 +47,7 @@
             "dependsOn": [
                 "Compile"
             ],
-            "command": "qemu-system-riscv64",
+            "command": "make",
             "isBackground": true,
             "problemMatcher": {
                 "owner": "custom",
@@ -64,23 +67,7 @@
                 }
             },
             "args": [
-                "-s",
-                "-S",
-                "-M",
-                "virt",
-                "-net",
-                "none",
-                "--cpu",
-                "rv64",
-                "-smp",
-                "4",
-                "--nographic",
-                "-bios",
-                "rustsbi/rustsbi-qemu",
-                "-serial",
-                "telnet::1235,server",
-                "-device",
-                "loader,file=kernel,addr=0x80200000",
+                "qemu"
             ]
         },
         {

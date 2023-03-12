@@ -1,5 +1,6 @@
 [workspace]
-members=["kernel"]
+members=["kernel", "user"]
 
 [profile.release]
-debug = 1
+lto = true
+debug = true
