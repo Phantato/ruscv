@@ -5,7 +5,7 @@ use core::{
     mem::{self, MaybeUninit},
 };
 
-use crate::{sync::UPSafeCell, trace, trap::TrapCtx};
+use crate::{println, sbi, sync::UPSafeCell, trace, trap::TrapCtx};
 
 const USER_STACK_SIZE: usize = 4096 * 2;
 const KERNEL_STACK_SIZE: usize = 4096 * 2;
@@ -100,7 +100,8 @@ impl AppManager {
 
     unsafe fn load(&self, id: usize) {
         if id >= self.num {
-            panic!("All applications completed!");
+            println!("no more app to execute");
+            sbi::shutdown()
         }
         trace!("[kernel] Loading app_{}", id);
         // clear app area

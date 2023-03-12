@@ -2,9 +2,18 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "Clean",
+            "type": "shell",
+            "command": "make",
+            "args": [
+                "clean"
+            ]
+        },
+        {
             "label": "Compile",
             "type": "shell",
             "group": "build",
+            "dependsOn": "Clean",
             "command": "make",
             "args": [
                 "kernel"

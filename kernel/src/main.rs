@@ -70,17 +70,36 @@ mod kernel_address {
 mod panic {
     use crate::println;
     use crate::sbi::shutdown;
-    use core::panic::PanicInfo;
+    use core::{arch::asm, panic::PanicInfo, ptr};
 
     #[panic_handler]
     fn panic(_info: &PanicInfo) -> ! {
         let unknown_info = format_args!("Unknown Reason");
         let msg = _info.message().unwrap_or(&unknown_info);
+        print_stack_trace();
         if let Some(loc) = _info.location() {
             println!("Kernel Paniced at {}:{} {}!", loc.file(), loc.line(), msg);
         } else {
             println!("{}", msg);
         }
         shutdown()
+    }
+
+    pub fn print_stack_trace() -> () {
+        println!("== Begin stack trace ==");
+
+        let mut fp: *const usize;
+        unsafe {
+            asm!("mv {}, fp", out(reg) fp);
+            while fp != ptr::null() {
+                let saved_ra = *fp.sub(1);
+                let saved_fp = *fp.sub(2);
+
+                println!("0x{:016x}, fp = 0x{:016x}", saved_ra, saved_fp);
+
+                fp = saved_fp as *const usize;
+            }
+        }
+        println!("== End stack trace ==");
     }
 }
