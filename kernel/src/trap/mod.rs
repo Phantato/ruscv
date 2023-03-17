@@ -45,19 +45,35 @@ fn trap_handler(ctx: &mut TrapCtx) -> &mut TrapCtx {
     match scause::read().cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             ctx.sepc += 4;
-            ctx.x[10] = syscall(ctx.x[17], [ctx.x[10], ctx.x[11], ctx.x[12]]) as usize;
+            match syscall(ctx.x[17], [ctx.x[10], ctx.x[11], ctx.x[12]]) {
+                Ok(len) => ctx.x[10] = len as usize,
+                Err(hint) => kernel_fail(ctx, unsafe { core::str::from_utf8_unchecked(&hint) }),
+            }
         }
         Trap::Exception(Exception::StoreFault) | Trap::Exception(Exception::StorePageFault) => {
-            println!("[kernel] PageFault in application, kernel killed it.");
-            app_manager::run_next();
+            kernel_fail(ctx, "PageFault in application, kernel killed it.");
         }
         Trap::Exception(Exception::IllegalInstruction) => {
-            println!("[kernel] IllegalInstruction in application, kernel killed it.");
-            app_manager::run_next();
+            kernel_fail(ctx, "IllegalInstruction in application, kernel killed it.");
         }
         x @ _ => {
             panic!("Unsupported trap {:?}, stval = {:#x}!", x, stval::read());
         }
     }
     ctx
+}
+
+fn kernel_fail(ctx: &TrapCtx, hint: &str) {
+    println!(
+        "{}[kernel]{}{}",
+        crate::console::LogLevel::ERROR,
+        hint,
+        crate::console::LogLevel::NONE,
+    );
+    println!(
+        "instrument at {:#x}",
+        app_manager::current_instrument_location(ctx.sepc)
+    );
+
+    app_manager::run_next();
 }

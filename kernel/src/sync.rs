@@ -10,10 +10,10 @@ impl<T> UPSafeCell<T> {
     pub unsafe fn new(val: T) -> Self {
         Self { inner: val.into() }
     }
-    pub fn borrow(&self) -> Ref<'_, T> {
+    pub fn get(&self) -> Ref<'_, T> {
         self.inner.borrow()
     }
-    pub fn borrow_mut(&self) -> RefMut<'_, T> {
+    pub fn get_mut(&self) -> RefMut<'_, T> {
         self.inner.borrow_mut()
     }
 }

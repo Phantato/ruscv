@@ -1,11 +1,14 @@
 #![allow(unused)]
 use core::{
     arch::asm,
-    array, fmt, hint,
+    array,
+    borrow::Borrow,
+    default, ffi, fmt, hint,
     mem::{self, MaybeUninit},
+    ops::AddAssign,
 };
 
-use crate::{println, sbi, sync::UPSafeCell, trace, trap::TrapCtx};
+use crate::{print, println, sbi, sync::UPSafeCell, trace, trap::TrapCtx};
 
 const USER_STACK_SIZE: usize = 4096 * 2;
 const KERNEL_STACK_SIZE: usize = 4096 * 2;
@@ -52,32 +55,42 @@ impl UserStack {
         self.data.as_ptr() as usize + USER_STACK_SIZE
     }
 }
+#[derive(Default, Clone, Copy)]
+struct App {
+    start: usize,
+    len: usize,
+    seq_no: usize,
+    name: usize,
+}
+
+impl fmt::Display for App {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "\t[prog no.{}]:{:?}      \tstart from:{:#x},\tlen:{:#x}",
+            self.seq_no,
+            unsafe { ffi::CStr::from_ptr(self.name as *const _) },
+            self.start,
+            self.len
+        )
+    }
+}
 
 struct AppManager {
     num: usize,
-    current: usize,
-    interval: [usize; MAX_APP_NUM + 1],
+    next: usize,
+    load: [App; MAX_APP_NUM + 1],
 }
 
 impl fmt::Display for AppManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unsafe {
-            let mut debug = f.debug_struct("AppManager");
-            debug
-                .field("num", &self.num)
-                .field("current", &self.current);
-
-            for i in 0..self.num {
-                let mut field_name = *b"app_00";
-                field_name[4] += i as u8 / 10;
-                field_name[5] += i as u8 % 10;
-                debug.field(
-                    core::str::from_utf8_unchecked(&field_name),
-                    &((self.interval)[i]..(self.interval)[i + 1]),
-                );
-            }
-            debug.finish()
+        writeln!(f, "num: {}\r", self.num)?;
+        writeln!(f, "current: {}\r", self.next - 1)?;
+        writeln!(f, "all loads: [\r")?;
+        for i in 0..self.num {
+            writeln!(f, "{}\r", self.load[i])?
         }
+        writeln!(f, "]\r")
     }
 }
 
@@ -88,14 +101,24 @@ impl AppManager {
         }
         let num_app_ptr = _num_app as *const usize;
         let num = num_app_ptr.read_volatile();
-        let interval_raw = core::slice::from_raw_parts(num_app_ptr.add(1), num + 1);
-        let mut interval = [0; 17];
-        interval[..=num].copy_from_slice(interval_raw);
-        Self {
-            num,
-            interval,
-            current: 0,
+        println!("{}", num);
+        let mut load: [App; 17] = Default::default();
+        let mut interval_cursor = num_app_ptr.add(1);
+        let mut name_cursor = interval_cursor.add(num + 1) as *const u8;
+
+        for i in 0..num {
+            load[i].seq_no = i;
+            load[i].start = *interval_cursor;
+            interval_cursor = interval_cursor.add(1);
+            load[i].len = *interval_cursor - load[i].start;
+            load[i].name = name_cursor as usize;
+            while *name_cursor != 0 {
+                name_cursor = name_cursor.add(1);
+            }
+            name_cursor = name_cursor.add(1);
         }
+
+        Self { num, load, next: 0 }
     }
 
     unsafe fn load(&self, id: usize) {
@@ -103,13 +126,12 @@ impl AppManager {
             println!("no more app to execute");
             sbi::shutdown()
         }
+        let app = &self.load[id];
         trace!("[kernel] Loading app_{}", id);
         // clear app area
         core::slice::from_raw_parts_mut(APP_BASE_ADDRESS as *mut u8, APP_SIZE_LIMIT).fill(0);
-        let app_src = core::slice::from_raw_parts(
-            self.interval[id] as *const u8,
-            self.interval[id + 1] - self.interval[id],
-        );
+
+        let app_src = core::slice::from_raw_parts(app.start as *const u8, app.len);
         let app_dst = core::slice::from_raw_parts_mut(APP_BASE_ADDRESS as *mut u8, app_src.len());
         app_dst.copy_from_slice(app_src);
         // memory fence about fetching the instruction memory
@@ -119,11 +141,11 @@ impl AppManager {
 
 pub fn run_next() -> ! {
     {
-        let mut app_manager = APP_MANAGER.borrow_mut();
+        let mut app_manager = APP_MANAGER.get_mut();
         unsafe {
-            app_manager.load(app_manager.current);
+            app_manager.load(app_manager.next);
         }
-        app_manager.current += 1;
+        app_manager.next += 1;
     }
 
     extern "C" {
@@ -133,4 +155,39 @@ pub fn run_next() -> ! {
         __restore(KERNEL_STACK.new_context() as usize);
     }
     unreachable!()
+}
+
+pub fn print_loads() {
+    let inner = APP_MANAGER.get();
+    println!("Loaded Apps: {}", inner);
+}
+
+pub fn addr_valid(addr: usize) -> bool {
+    let inner = APP_MANAGER.get();
+    let current_app = inner.load[inner.next - 1];
+    drop(inner);
+    let current_app_start = APP_BASE_ADDRESS;
+    let current_app_end = APP_BASE_ADDRESS + current_app.len;
+    if addr >= current_app_start && addr < current_app_end {
+        return true;
+    }
+    let stack_top: usize;
+    unsafe {
+        asm!("mv {}, sp", out(reg) stack_top);
+    }
+    if addr > stack_top && addr <= USER_STACK.get_bottom() {
+        return true;
+    }
+
+    return false;
+}
+
+pub fn current_instrument_location(addr: usize) -> usize {
+    addr
+    // let offset = addr - APP_BASE_ADDRESS;
+    // let inner = APP_MANAGER.get();
+    // let current_start = inner.load[inner.next - 1].start;
+    // println!("addr: {:#x}, start: {:#x}", addr, current_start);
+
+    // return current_start + offset;
 }

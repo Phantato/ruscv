@@ -7,6 +7,7 @@ mod sbi;
 mod sync;
 mod syscall;
 mod trap;
+mod utils;
 
 use core::arch::global_asm;
 
@@ -38,6 +39,7 @@ pub fn rust_main(hartid: usize) -> ! {
 
     clear_bss();
     trap::init();
+    app_manager::print_loads();
     app_manager::run_next();
 }
 

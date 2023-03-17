@@ -36,8 +36,22 @@ _num_app:
     for i in 0..apps.len() {
         writeln!(f, r#"    .quad app_{}_start"#, i)?;
     }
-    writeln!(f, r#"    .quad app_{}_end"#, apps.len() - 1)?;
+    writeln!(
+        f,
+        r#"    .quad app_{}_end
+    .align 1"#,
+        apps.len() - 1
+    )?;
 
+    for (_, app) in apps.iter().enumerate() {
+        let str = app.split_at(2);
+        writeln!(f, r#"    .string "{}""#, str.1)?
+    }
+    writeln!(
+        f,
+        r#"
+    .align 3"#
+    )?;
     for (idx, app) in apps.iter().enumerate() {
         println!("app_{}: {}", idx, app);
         writeln!(
