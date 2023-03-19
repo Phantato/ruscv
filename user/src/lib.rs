@@ -35,7 +35,7 @@ pub fn exit(exit_code: i32) -> isize {
 }
 
 mod panic {
-    use crate::println;
+    use crate::{println, syscall};
     use core::panic::PanicInfo;
 
     #[panic_handler]
@@ -43,10 +43,15 @@ mod panic {
         let unknown_info = format_args!("Unknown Reason");
         let msg = _info.message().unwrap_or(&unknown_info);
         if let Some(loc) = _info.location() {
-            println!("Kernel Paniced at {}:{} {}!", loc.file(), loc.line(), msg);
+            println!(
+                "\x1b[31m[Panic] at {}:{} {}!\x1b[0m",
+                loc.file(),
+                loc.line(),
+                msg
+            );
         } else {
-            println!("{}", msg);
+            println!("\x1b[31m[Panic] {}\x1b[0m", msg);
         }
-        loop {}
+        syscall::sys_exit(-1)
     }
 }

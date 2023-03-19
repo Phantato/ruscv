@@ -21,6 +21,7 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
     sys_call(SYSCALL_WRITE, [fd, buffer.as_ptr() as usize, buffer.len()])
 }
 
-pub fn sys_exit(xstate: i32) -> isize {
-    sys_call(SYSCALL_EXIT, [xstate as usize, 0, 0])
+pub fn sys_exit(xstate: i32) -> ! {
+    sys_call(SYSCALL_EXIT, [xstate as usize, 0, 0]);
+    unreachable!("program should exited!")
 }
