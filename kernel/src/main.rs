@@ -1,8 +1,15 @@
 #![no_std]
 #![no_main]
-#![feature(panic_info_message, set_ptr_value, array_methods, cell_leak)]
+#![feature(
+    panic_info_message,
+    set_ptr_value,
+    array_methods,
+    cell_leak,
+    ptr_from_ref
+)]
 mod app_manager;
 mod console;
+mod heap;
 mod sbi;
 mod sync;
 mod syscall;
