@@ -1,6 +1,7 @@
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
 BASE_ADDRESS = 0x80200000;
+HEAP_SIZE = 0x2000000;
 
 SECTIONS
 {
@@ -37,6 +38,11 @@ SECTIONS
         . = ALIGN(4K);
         ebss = .;
         ekernel = .;
+        
+        sheap = .;
+        . += HEAP_SIZE;
+        . = ALIGN(4K);
+        eheap = .;
 
         bstack = .;
         . += 4K;
