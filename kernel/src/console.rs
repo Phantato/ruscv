@@ -1,5 +1,4 @@
 use crate::sbi::console_putchar;
-
 use core::fmt::{self, Display, Write};
 
 #[allow(unused)]

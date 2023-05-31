@@ -1,5 +1,3 @@
-mod free_list;
-
 use core::{
     alloc::Layout,
     cmp::{max, min},
@@ -7,14 +5,14 @@ use core::{
     ptr::NonNull,
 };
 
-use self::free_list::FreeList;
+use super::free_list::FreeList;
 
 pub struct Heap<const ORDER: usize> {
     free_list: [FreeList; ORDER],
 }
 
 impl<const ORDER: usize> Heap<ORDER> {
-    pub fn new() -> Self {
+    pub const fn empty() -> Self {
         Self {
             free_list: [FreeList::new(); ORDER],
         }
@@ -28,7 +26,10 @@ impl<const ORDER: usize> Heap<ORDER> {
 
         while start + unit <= end {
             let lowbit = start & (!start + 1);
-            let size = min(lowbit, prev_power_of_two(end - start));
+            let size = min(
+                min(lowbit, prev_power_of_two(end - start)),
+                1 << (ORDER - 1),
+            );
             self.free_list[size.trailing_zeros() as usize].push(start as *mut usize);
             start += size
         }
@@ -39,6 +40,12 @@ impl<const ORDER: usize> Heap<ORDER> {
             size_of::<usize>(),
         );
         let class = size.trailing_zeros() as usize;
+        assert!(
+            class <= ORDER,
+            "try to alloc {}, which is larger than page size {}",
+            size,
+            1 << (ORDER - 1)
+        );
         let exists = self
             .free_list
             .iter()
@@ -68,17 +75,16 @@ impl<const ORDER: usize> Heap<ORDER> {
         unsafe {
             self.free_list[class].push(ptr.as_ptr() as *mut usize);
             let mut p = ptr.as_ptr() as usize;
-            while class < ORDER {
+            while class < ORDER - 1 {
                 let buddy = p ^ (1 << class);
-                match self.free_list[class].iter().find(|n| *n == buddy) {
-                    Some(mut n) => {
-                        n.pop();
-                        self.free_list[class].pop();
-                        p = min(p, buddy);
-                        class += 1;
-                        self.free_list[class].push(p as *mut usize);
-                    }
-                    None => break,
+                if let Some(mut n) = self.free_list[class].iter().find(|n| *n == buddy) {
+                    n.pop();
+                    self.free_list[class].pop();
+                    p = min(p, buddy);
+                    class += 1;
+                    self.free_list[class].push(p as *mut usize);
+                } else {
+                    break;
                 }
             }
         }

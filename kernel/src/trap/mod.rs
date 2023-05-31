@@ -8,7 +8,7 @@ use riscv::register::{
 };
 global_asm!(include_str!("trap.s"));
 
-use crate::{app_manager, println, syscall::syscall};
+use crate::{app, println, syscall::syscall};
 
 pub fn init() {
     extern "C" {
@@ -72,8 +72,8 @@ fn kernel_fail(ctx: &TrapCtx, hint: &str) {
     );
     println!(
         "instrument at {:#x}",
-        app_manager::current_instrument_location(ctx.sepc)
+        app::current_instrument_location(ctx.sepc)
     );
 
-    app_manager::run_next();
+    app::run_next();
 }

@@ -1,4 +1,5 @@
 #![allow(unused)]
+use crate::{print, println, sbi, sync::UPSafeCell, trace, trap::TrapCtx};
 use core::{
     arch::asm,
     array,
@@ -7,8 +8,6 @@ use core::{
     mem::{self, MaybeUninit},
     ops::AddAssign,
 };
-
-use crate::{print, println, sbi, sync::UPSafeCell, trace, trap::TrapCtx};
 
 const USER_STACK_SIZE: usize = 4096 * 2;
 const KERNEL_STACK_SIZE: usize = 4096 * 2;
@@ -21,18 +20,18 @@ lazy_static::lazy_static! {
         UPSafeCell::new(AppManager::new())
     };
 }
-
 static KERNEL_STACK: KernelStack = KernelStack {
     data: [0; KERNEL_STACK_SIZE],
 };
-
 static USER_STACK: UserStack = UserStack {
     data: [0; USER_STACK_SIZE],
 };
 
+#[repr(align(4096))]
 struct KernelStack {
     data: [usize; KERNEL_STACK_SIZE],
 }
+#[repr(align(4096))]
 struct UserStack {
     data: [usize; USER_STACK_SIZE],
 }

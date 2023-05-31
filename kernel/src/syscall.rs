@@ -3,10 +3,9 @@ const MAX_MSG_LEN: usize = 32;
 const SYSCALL_WRITE: usize = 64;
 const SYSCALL_EXIT: usize = 93;
 
-use crate::fmt_str;
-
 use self::fs::*;
 use self::process::*;
+use crate::fmt_str;
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> Result<isize, [u8; MAX_MSG_LEN]> {
@@ -26,14 +25,14 @@ pub fn syscall(syscall_id: usize, args: [usize; 3]) -> Result<isize, [u8; MAX_MS
 }
 
 mod fs {
-    use crate::{app_manager, print};
+    use crate::{app, print};
 
     const FD_STDOUT: usize = 1;
 
     /// write buf of length `len`  to a file with `fd`
     pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> Result<isize, &'static str> {
         let buf_end = unsafe { buf.add(len - 1) };
-        if app_manager::addr_valid(buf as usize) && app_manager::addr_valid(buf_end as usize) {
+        if app::addr_valid(buf as usize) && app::addr_valid(buf_end as usize) {
             match fd {
                 FD_STDOUT => {
                     let slice = unsafe { core::slice::from_raw_parts(buf, len) };
@@ -50,11 +49,11 @@ mod fs {
 }
 
 mod process {
-    use crate::{app_manager, println};
+    use crate::{app, println};
 
     /// task exits and submit an exit code
     pub fn sys_exit(exit_code: i32) -> ! {
         println!("[kernel] Application exited with code {}", exit_code);
-        app_manager::run_next()
+        app::run_next()
     }
 }

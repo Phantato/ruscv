@@ -7,8 +7,10 @@ pub struct UPSafeCell<T> {
 unsafe impl<T> Sync for UPSafeCell<T> {}
 
 impl<T> UPSafeCell<T> {
-    pub unsafe fn new(val: T) -> Self {
-        Self { inner: val.into() }
+    pub const unsafe fn new(val: T) -> Self {
+        Self {
+            inner: RefCell::new(val),
+        }
     }
     pub fn get(&self) -> Ref<'_, T> {
         self.inner.borrow()

@@ -1,4 +1,4 @@
-use core::{ops::DerefMut, ptr};
+use core::{marker::PhantomData, ptr};
 
 pub type FreeList = LinkedList;
 
@@ -7,8 +7,10 @@ pub struct LinkedList {
     next: *mut usize,
 }
 
+unsafe impl Send for LinkedList {}
+
 impl LinkedList {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             next: ptr::null_mut(),
         }
@@ -22,48 +24,27 @@ impl LinkedList {
         self.next = item;
     }
     pub fn pop(&mut self) -> Option<*mut usize> {
-        match self.is_empty() {
-            true => None,
-            false => {
-                let item = self.next;
-                self.next = unsafe { *item as *mut usize };
-                Some(item)
-            }
+        if !self.is_empty() {
+            let item = self.next;
+            self.next = unsafe { *item as *mut usize };
+            Some(item)
+        } else {
+            None
         }
     }
     pub fn iter(&mut self) -> Iter {
         Iter {
             prev: ptr::from_mut(&mut self.next) as *mut usize,
             curr: self.next,
-            list: self,
+            list: PhantomData,
         }
     }
 }
 
-// pub struct Iter<'a> {
-//     curr: *mut usize,
-//     list: &'a LinkedList,
-// }
-
-// impl<'a> Iterator for Iter<'a> {
-//     type Item = *mut usize;
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         match self.curr.is_null() {
-//             true => None,
-//             false => {
-//                 let item = self.curr;
-//                 self.curr = unsafe { *item as *mut usize };
-//                 Some(item)
-//             }
-//         }
-//     }
-// }
-
 pub struct PopableNode<'a> {
     prev: *mut usize,
     curr: *mut usize,
-    list: &'a LinkedList,
+    list: PhantomData<&'a LinkedList>,
 }
 
 impl<'a> PopableNode<'a> {
@@ -85,7 +66,7 @@ impl PartialEq<usize> for PopableNode<'_> {
 pub struct Iter<'a> {
     prev: *mut usize,
     curr: *mut usize,
-    list: &'a LinkedList,
+    list: PhantomData<&'a LinkedList>,
 }
 
 impl<'a> Iterator for Iter<'a> {

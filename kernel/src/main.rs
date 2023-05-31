@@ -5,20 +5,24 @@
     set_ptr_value,
     array_methods,
     cell_leak,
-    ptr_from_ref
+    ptr_from_ref,
+    step_trait,
+    alloc_error_handler
 )]
-mod app_manager;
+#[macro_use]
+extern crate alloc;
+
+mod app;
 mod console;
-mod heap;
+mod memory;
 mod sbi;
 mod sync;
 mod syscall;
 mod trap;
 mod utils;
 
-use core::arch::global_asm;
-
 use crate::kernel_address::*;
+use core::arch::global_asm;
 
 global_asm!(include_str!("entry.s"));
 global_asm!(include_str!("link_app.s"));
@@ -35,19 +39,22 @@ pub fn rust_main(hartid: usize) -> ! {
     info!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
     info!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
     info!(
-        "load range : [{:#x}, {:#x}], _start = {:#x}",
+        "kernel image : [{:#x}, {:#x}], _start = {:#x}",
         skernel as usize, ekernel as usize, _start as usize
     );
-
     info!(
         "boot stack alloced at [{:#x}, {:#x}]",
         bstack as usize, tstack as usize
     );
 
     clear_bss();
+
+    memory::init_heap();
+    memory::heap_test();
+
     trap::init();
-    app_manager::print_loads();
-    app_manager::run_next();
+    app::print_loads();
+    app::run_next();
 }
 
 fn clear_bss() {
@@ -70,7 +77,6 @@ mod kernel_address {
         pub fn edata();
         pub fn sbss();
         pub fn ebss();
-
         pub fn bstack();
         pub fn tstack();
     }
@@ -110,5 +116,10 @@ mod panic {
             }
         }
         println!("== End stack trace ==");
+    }
+
+    #[alloc_error_handler]
+    pub fn handle_alloc_error(layout: core::alloc::Layout) -> ! {
+        panic!("Heap allocation error, layout = {:?}", layout);
     }
 }
