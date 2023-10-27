@@ -101,7 +101,7 @@ impl AppManager {
         let num_app_ptr = _num_app as *const usize;
         let num = num_app_ptr.read_volatile();
         println!("{}", num);
-        let mut load: [App; 17] = Default::default();
+        let mut load: [App; MAX_APP_NUM + 1] = Default::default();
         let mut interval_cursor = num_app_ptr.add(1);
         let mut name_cursor = interval_cursor.add(num + 1) as *const u8;
 

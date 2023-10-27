@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 riscv = { git = "https://github.com/rcore-os/riscv", features = ["inline-asm"] }
+bitflags = "*"
 lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 
 [[bin]]
@@ -12,9 +13,9 @@ name = "kernel"
 path = "src/main.rs"
 
 [features]
-default   = ["log-error"]
+default = ["log-error"]
 log-error = []
-log-warn  = ["log-error"]
-log-info  = ["log-warn"]
+log-warn = ["log-error"]
+log-info = ["log-warn"]
 log-debug = ["log-info"]
 log-trace = ["log-debug"]

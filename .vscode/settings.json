@@ -3,14 +3,10 @@
   "editor.rulers": [
     100
   ],
-  // "rust-analyzer.cargo.target": "riscv64gc-unknown-none-elf",
   "rust-analyzer.check.features": [
     "log-trace"
   ],
-  "rust-analyzer.checkOnSave.allTargets": false,
-  "rust-analyzer.checkOnSave.extraArgs": [
-    "--bins"
-  ],
-  "rust-analyzer.lens.debug": false,
-  "rust-analyzer.lens.run": false
+  "rust-analyzer.check.allTargets": false,
+  "rust-analyzer.check.targets": "riscv64gc-unknown-none-elf",
+  "rust-analyzer.cargo.target": "riscv64gc-unknown-none-elf",
 }

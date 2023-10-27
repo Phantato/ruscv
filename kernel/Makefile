@@ -25,10 +25,10 @@ KERNEL_ELF_DEPS = $(filter-out %: ,$(file < $(KERNEL_ELF).d)) $(KERNEL_MANIFEST)
 ##--------------------------------------------------------------------------------------------------
 ## Command building blocks
 ##--------------------------------------------------------------------------------------------------
-KERNEL_LINK_SCRIPT := \
+KERNEL_LINK_SCRIPT = \
 	-C link-arg=-T${KERNEL_DIR}/src/kernel.ld
-KERNEL_COMPILE_ARGS := \
-	--features log-${KERNEL_LOG_LEVEL}
+KERNEL_COMPILE_ARGS = \
+	-p ruscv_kernel --features log-${KERNEL_LOG_LEVEL}
 
 ##------------------------------------------------------------------------------
 ## Save the configuration as a file, so make understands if it changed.
@@ -43,8 +43,8 @@ $(LAST_BUILD_CONFIG):
 ##------------------------------------------------------------------------------
 $(KERNEL_ELF): $(KERNEL_ELF_DEPS)
 	$(call color_header, "Compiling kernel ELF")
-	@RUSTFLAGS="$(COMPILER_ARGS) ${KERNEL_LINK_SCRIPT}" $(RUSTC_CMD) ${KERNEL_COMPILE_ARGS} \
-		-p ruscv_kernel
+	@RUSTFLAGS="$(COMPILER_ARGS) ${KERNEL_LINK_SCRIPT}" $(RUSTC_CMD) ${KERNEL_COMPILE_ARGS}
+		
 
 ##------------------------------------------------------------------------------
 ## Generate the stripped kernel binary

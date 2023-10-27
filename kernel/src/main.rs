@@ -38,6 +38,7 @@ pub fn rust_main(hartid: usize) -> ! {
     info!(".text [{:#x}, {:#x})", stext as usize, etext as usize);
     info!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
     info!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
+    info!(".bss [{:#x}, {:#x})", sbss as usize, ebss as usize);
     info!(
         "kernel image : [{:#x}, {:#x}], _start = {:#x}",
         skernel as usize, ekernel as usize, _start as usize
@@ -49,10 +50,10 @@ pub fn rust_main(hartid: usize) -> ! {
 
     clear_bss();
 
-    memory::init_heap();
-    memory::heap_test();
+    memory::init();
 
     trap::init();
+
     app::print_loads();
     app::run_next();
 }
@@ -79,6 +80,8 @@ mod kernel_address {
         pub fn ebss();
         pub fn bstack();
         pub fn tstack();
+
+        pub fn strampoline();
     }
 }
 

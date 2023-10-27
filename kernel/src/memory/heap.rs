@@ -49,8 +49,10 @@ impl<const ORDER: usize> Heap<ORDER> {
         let exists = self
             .free_list
             .iter()
+            .skip(class)
             .position(|l| !l.is_empty())
-            .ok_or(())?;
+            .ok_or(())?
+            + class;
 
         for i in (class..exists).rev() {
             let block = self.free_list[i + 1].pop().ok_or(())?;
