@@ -4,26 +4,23 @@ use super::{
     MEMORY_END, PAGE_SIZE, PTE_PER_PAGE,
 };
 use crate::{
+    info,
     kernel_address::{ekernel, skernel},
-    println,
     sync::UPSafeCell,
+    trace,
 };
 use alloc::vec::Vec;
 
 pub struct PageFrame {
-    pub(super) ppn: PhysPageNum,
+    pub(crate) ppn: PhysPageNum,
 }
 
 impl PageFrame {
-    pub fn get_pte_array_mut(&self) -> &mut [PageTableEntry] {
-        // FIXME: this is not safe when concurrency
-        let pa: PhysAddr = self.ppn.into();
-        unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut PageTableEntry, PTE_PER_PAGE) }
+    pub fn get_pte_array_mut(&self) -> Option<&mut [PageTableEntry; PTE_PER_PAGE]> {
+        unsafe { PhysAddr::from(self.ppn).get_mut() }
     }
-    pub fn get_bytes_array_mut(&self) -> &mut [u8] {
-        // FIXME: this is not safe when concurrency
-        let pa: PhysAddr = self.ppn.into();
-        unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut u8, PAGE_SIZE) }
+    pub fn get_bytes_array_mut(&self) -> &mut [u8; PAGE_SIZE] {
+        unsafe { PhysAddr::from(self.ppn).get_mut().unwrap() }
     }
 }
 
@@ -54,6 +51,7 @@ pub fn init_frame_allocator() {
     );
 }
 
+#[allow(unused)]
 pub fn recycle_kernel_frames() {
     FRAME_ALLOCATOR.get_mut().add_pages(
         PhysAddr::from(skernel as usize).floor(),
@@ -79,7 +77,6 @@ impl StackFrameAllocator {
     pub fn init(&mut self, begin: PhysPageNum, end: PhysPageNum) {
         self.begin = begin;
         self.end = end;
-        println!("framed page size: {:x}", (end.0 - begin.0) * PAGE_SIZE)
     }
     pub fn add_pages(&mut self, begin: PhysPageNum, end: PhysPageNum) {
         for ppn in begin..end {
@@ -108,9 +105,8 @@ impl FrameAllocator for StackFrameAllocator {
         if ppn >= self.begin || self.recycled.iter().find(|r| ppn == **r).is_some() {
             panic!("deallocing page {} is not allocated yes", ppn.0)
         }
-        println!("cap: {}!", self.recycled.capacity());
         self.recycled.push(ppn);
-        println!("{} recycled!", ppn.0);
+        trace!("{} recycled!", ppn.0);
     }
 }
 
@@ -123,15 +119,13 @@ pub fn frame_allocator_test() {
     let mut v: Vec<PageFrame> = vec![];
     for i in 0..5 {
         let frame = frame_alloc().unwrap();
-        println!("{:?}", frame.ppn.0);
         v.push(frame);
     }
     v.clear();
     for i in 0..5 {
         let frame = frame_alloc().unwrap();
-        println!("{:?}", frame.ppn.0);
         v.push(frame);
     }
     drop(v);
-    println!("frame_allocator_test passed!");
+    info!("frame_allocator_test passed!");
 }

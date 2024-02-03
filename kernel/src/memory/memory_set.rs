@@ -2,37 +2,31 @@ extern crate alloc;
 
 use core::{arch::asm, slice};
 
-use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
+use alloc::{collections::BTreeMap, vec::Vec};
 use bitflags::bitflags;
 use riscv::register::satp;
 
 use crate::{
+    info,
     kernel_address::{
-        bstack, ebss, edata, erodata, etext, sbss, sdata, srodata, stext, strampoline, tstack,
-    }, //strampoline},
-    // memory::PAGE_SIZE_BITS,
-    println,
-    sync::UPSafeCell,
+        bstack, ebss, edata, ekernel, erodata, etext, sbss, sdata, srodata, stext, strampoline,
+        tstack,
+    },
+    memory::{KERNEL_SPACE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE},
+    trace,
 };
 
 use super::{
     address::{PhysPageNum, VirtAddr, VirtPageNum},
     frame_allocator::{frame_alloc, PageFrame},
-    page_table::{PTEFlags, PageTable},
+    page_table::{PTEFlags, PageTable, PageTableEntry},
     MEMORY_END, PAGE_SIZE,
 };
-
-lazy_static::lazy_static! {
-    pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet>> =
-        Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
-}
-
-pub const TRAMPOLINE: usize = usize::MAX - PAGE_SIZE + 1;
 
 #[allow(unused)]
 pub enum SegmentType {
     Framed,
-    Identical,
+    Linear(usize),
 }
 
 bitflags! {
@@ -54,7 +48,7 @@ struct Segment {
 
 #[allow(unused)]
 impl Segment {
-    pub fn new(
+    fn new(
         start: VirtAddr,
         end: VirtAddr,
         seg_type: SegmentType,
@@ -71,23 +65,26 @@ impl Segment {
         }
     }
 
-    pub fn map(&mut self, page_table: &mut PageTable) {
+    fn map(&mut self, page_table: &mut PageTable) {
         for vpn in self.start..self.end {
             self.map_one(page_table, vpn)
         }
     }
-    pub fn unmap(&mut self, page_table: &mut PageTable) {
+    fn unmap(&mut self, page_table: &mut PageTable) {
         for vpn in self.start..self.end {
             self.unmap_one(page_table, vpn)
         }
     }
-    pub fn copy_data(&mut self, data: &[u8]) {
+    fn copy_data(&mut self, data: &[u8]) {
         let mut start: usize = 0;
         let len = data.len();
         for ref vpn in self.start..self.end {
             let src = &data[start..len.min(start + PAGE_SIZE)];
-            let dst =
-                &mut self.data_frames.get_mut(vpn).unwrap().get_bytes_array_mut()[..src.len()];
+            let dst = &mut self
+                .data_frames
+                .get_mut(vpn)
+                .expect(&format!("vpn 0x{:x} not found", vpn.0))
+                .get_bytes_array_mut()[..src.len()];
             dst.copy_from_slice(src);
             start += PAGE_SIZE;
             if start >= len {
@@ -104,7 +101,7 @@ impl Segment {
                 self.data_frames.insert(vpn, frame);
                 ppn
             }
-            SegmentType::Identical => PhysPageNum(vpn.0),
+            SegmentType::Linear(offset) => PhysPageNum(vpn.0 - offset),
         };
         page_table.map(vpn, ppn, flags);
     }
@@ -114,49 +111,97 @@ impl Segment {
                 self.data_frames.remove(&vpn);
                 page_table.unmap(vpn)
             }
-            SegmentType::Identical => {}
+            SegmentType::Linear(_) => {}
         }
     }
 }
 
 pub struct MemorySet {
-    page_table: PageTable,
+    pub page_table: PageTable,
     segments: Vec<Segment>,
 }
 
 #[allow(unused)]
 impl MemorySet {
-    fn new() -> Self {
-        Self {
-            page_table: PageTable::new(),
-            segments: Vec::new(),
+    // /// Include sections in elf and trampoline and TrapContext and user stack,
+    // /// also returns user_sp and entry point.
+    pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize) {
+        let mut memory_set = Self::new();
+        // map trampoline
+        memory_set.map_trampoline(
+            KERNEL_SPACE
+                .get()
+                .translate(VirtAddr::from(strampoline as usize).floor())
+                .expect("text seg should be mapped!")
+                .ppn(),
+        );
+        // map program headers of elf, with U flag
+        let elf = xmas_elf::ElfFile::new(elf_data).unwrap();
+        let elf_header = elf.header;
+        let magic = elf_header.pt1.magic;
+        assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
+        let ph_count = elf_header.pt2.ph_count();
+        let mut max_end_vpn = VirtPageNum(0);
+        for i in 0..ph_count {
+            let ph = elf.program_header(i).unwrap();
+            if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
+                let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
+                let end_va: VirtAddr = ((ph.virtual_addr() + ph.mem_size()) as usize).into();
+                let mut map_perm = SegmentPermission::U;
+                let ph_flags = ph.flags();
+                if ph_flags.is_read() {
+                    map_perm |= SegmentPermission::R;
+                }
+                if ph_flags.is_write() {
+                    map_perm |= SegmentPermission::W;
+                }
+                if ph_flags.is_execute() {
+                    map_perm |= SegmentPermission::X;
+                }
+                let seg = Segment::new(start_va, end_va, SegmentType::Framed, map_perm);
+                max_end_vpn = seg.end;
+                memory_set.push(
+                    seg,
+                    Some(&elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize]),
+                );
+                trace!(
+                    "map [0x{:x}, 0x{:x}) to [0x{:x}, 0x{:x})",
+                    start_va.0,
+                    end_va.0,
+                    memory_set.translate(start_va.floor()).unwrap().ppn().0,
+                    memory_set.translate(end_va.ceil()).unwrap().ppn().0,
+                )
+            }
         }
-    }
-    fn push(&mut self, mut segment: Segment, data: Option<&[u8]>) {
-        segment.map(&mut self.page_table);
-        if let Some(data) = data {
-            segment.copy_data(data);
-        }
-        self.segments.push(segment);
-    }
-    // Assume that no conflicts.
-    pub fn insert_framed_area(
-        &mut self,
-        start_va: VirtAddr,
-        end_va: VirtAddr,
-        permission: SegmentPermission,
-    ) {
-        self.push(
-            Segment::new(start_va, end_va, SegmentType::Framed, permission),
+        // map user stack with U flags
+        let max_end_va: VirtAddr = max_end_vpn.into();
+        let mut user_stack_bottom: usize = max_end_va.into();
+        // guard page
+        user_stack_bottom += PAGE_SIZE;
+        let user_stack_top = user_stack_bottom + USER_STACK_SIZE;
+        memory_set.push(
+            Segment::new(
+                user_stack_bottom.into(),
+                user_stack_top.into(),
+                SegmentType::Framed,
+                SegmentPermission::R | SegmentPermission::W | SegmentPermission::U,
+            ),
             None,
         );
-    }
-
-    pub fn map_trampoline(&mut self, trampoline_ppn: PhysPageNum) {
-        self.page_table.map(
-            VirtAddr::from(TRAMPOLINE).floor(),
-            trampoline_ppn,
-            PTEFlags::X,
+        // map TrapContext
+        memory_set.push(
+            Segment::new(
+                TRAP_CONTEXT.into(),
+                TRAMPOLINE.into(),
+                SegmentType::Framed,
+                SegmentPermission::R | SegmentPermission::W,
+            ),
+            None,
+        );
+        (
+            memory_set,
+            user_stack_top,
+            elf.header.pt2.entry_point() as usize,
         )
     }
 
@@ -167,9 +212,8 @@ impl MemorySet {
                 (stext as usize).into(),
                 (etext as usize).into(),
                 SegmentType::Framed,
-                SegmentPermission::R | SegmentPermission::X,
+                SegmentPermission::X,
             ),
-            // None,
             Some(unsafe {
                 slice::from_raw_parts(stext as *const u8, etext as usize - stext as usize)
             }),
@@ -181,11 +225,11 @@ impl MemorySet {
                 SegmentType::Framed,
                 SegmentPermission::R,
             ),
-            // None,
             Some(unsafe {
                 slice::from_raw_parts(srodata as *const u8, erodata as usize - srodata as usize)
             }),
         );
+        // Need to Manually copy data in order to avoid frame allocator conflict.
         kernel.push(
             Segment::new(
                 (sdata as usize).into(),
@@ -193,11 +237,9 @@ impl MemorySet {
                 SegmentType::Framed,
                 SegmentPermission::R | SegmentPermission::W,
             ),
-            // None,
-            Some(unsafe {
-                slice::from_raw_parts(sdata as *const u8, edata as usize - sdata as usize)
-            }),
+            None,
         );
+        let data_seg_idx = kernel.segments.len() - 1;
         kernel.push(
             Segment::new(
                 (sbss as usize).into(),
@@ -205,11 +247,9 @@ impl MemorySet {
                 SegmentType::Framed,
                 SegmentPermission::R | SegmentPermission::W,
             ),
-            // None,
-            Some(unsafe {
-                slice::from_raw_parts(sbss as *const u8, ebss as usize - sbss as usize)
-            }),
+            None,
         );
+        let bss_seg_idx = kernel.segments.len() - 1;
         kernel.push(
             Segment::new(
                 (bstack as usize).into(),
@@ -217,46 +257,93 @@ impl MemorySet {
                 SegmentType::Framed,
                 SegmentPermission::R | SegmentPermission::W,
             ),
-            // None,
-            Some(unsafe {
-                slice::from_raw_parts(bstack as *const u8, tstack as usize - bstack as usize)
-            }),
+            None,
         );
+        let stack_seg_idx = kernel.segments.len() - 1;
         kernel.push(
             Segment::new(
-                (tstack as usize).into(),
+                (ekernel as usize).into(),
                 (MEMORY_END as usize).into(),
-                SegmentType::Identical,
+                SegmentType::Linear(0),
                 SegmentPermission::R | SegmentPermission::W,
             ),
             None,
         );
+        // trampoline page need to be manually configured.
         kernel.map_trampoline(
             kernel
-                .page_table
                 .translate(VirtAddr::from(strampoline as usize).floor())
-                .expect("text seg should be mapped!")
+                .unwrap()
                 .ppn(),
         );
+
+        kernel.segments[data_seg_idx].copy_data(unsafe {
+            slice::from_raw_parts(sdata as *const u8, edata as usize - sdata as usize)
+        });
+        kernel.segments[bss_seg_idx].copy_data(unsafe {
+            slice::from_raw_parts(sbss as *const u8, ebss as usize - sbss as usize)
+        });
+        kernel.segments[stack_seg_idx].copy_data(unsafe {
+            slice::from_raw_parts(bstack as *const u8, tstack as usize - bstack as usize)
+        });
         kernel.activate();
         kernel
     }
 
+    pub fn push_empty_seg(&mut self, start: VirtAddr, end: VirtAddr, seg_perm: SegmentPermission) {
+        self.push(
+            Segment::new(
+                start,
+                end,
+                SegmentType::Framed,
+                SegmentPermission::R | SegmentPermission::W,
+            ),
+            None,
+        );
+    }
+
+    pub fn token(&self) -> usize {
+        self.page_table.token()
+    }
+
+    pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+        self.page_table.translate(vpn)
+    }
+
+    fn map_trampoline(&mut self, trampoline_ppn: PhysPageNum) {
+        self.page_table.map(
+            VirtAddr::from(TRAMPOLINE).floor(),
+            trampoline_ppn,
+            PTEFlags::R | PTEFlags::X,
+        );
+    }
+
+    fn new() -> Self {
+        Self {
+            page_table: PageTable::new(),
+            segments: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, mut segment: Segment, data: Option<&[u8]>) {
+        segment.map(&mut self.page_table);
+        if let Some(data) = data {
+            segment.copy_data(data);
+        }
+        self.segments.push(segment);
+    }
+
     fn activate(&self) {
-        let satp = self.page_table.token();
+        let satp = self.token();
         unsafe {
             satp::write(satp);
             asm!("sfence.vma");
         }
     }
-    // /// Include sections in elf and trampoline and TrapContext and user stack,
-    // /// also returns user_sp and entry point.
-    // pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize);
 }
 
 #[allow(unused)]
 pub fn remap_test() {
-    println!("remap_test testing!");
     let mut kernel_space = KERNEL_SPACE.get_mut();
     let mid_text: VirtAddr = ((stext as usize + etext as usize) / 2).into();
     let mid_rodata: VirtAddr = ((srodata as usize + erodata as usize) / 2).into();
@@ -285,5 +372,5 @@ pub fn remap_test() {
             .executable(),
         false,
     );
-    println!("remap_test passed!");
+    info!("remap_test passed!");
 }

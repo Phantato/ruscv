@@ -1,4 +1,4 @@
-use core::iter::Step;
+use core::{iter::Step, ops::Add};
 
 use super::{PAGE_SIZE, PAGE_SIZE_BITS, PA_WIDTH, PPN_WIDTH, PTE_PER_PAGE, VA_WIDTH, VPN_WIDTH};
 
@@ -35,7 +35,18 @@ impl PhysAddr {
     pub fn ceil(&self) -> PhysPageNum {
         PhysPageNum((self.0 + PAGE_SIZE - 1) >> PAGE_SIZE_BITS)
     }
+    pub unsafe fn get_mut<T>(&self) -> Option<&'static mut T> {
+        (self.0 as *mut T).as_mut()
+    }
 }
+impl Add<usize> for PhysAddr {
+    type Output = Self;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        PhysAddr(self.0 + rhs)
+    }
+}
+
 impl From<usize> for PhysAddr {
     fn from(v: usize) -> Self {
         Self(v & ((1 << PA_WIDTH) - 1))
@@ -47,6 +58,11 @@ impl From<PhysPageNum> for PhysAddr {
     }
 }
 
+impl From<VirtAddr> for usize {
+    fn from(v: VirtAddr) -> Self {
+        v.0
+    }
+}
 impl VirtAddr {
     pub fn floor(&self) -> VirtPageNum {
         VirtPageNum(self.0 >> PAGE_SIZE_BITS)
@@ -70,13 +86,6 @@ impl From<VirtPageNum> for VirtAddr {
 impl From<usize> for PhysPageNum {
     fn from(v: usize) -> Self {
         Self(v & ((1 << PPN_WIDTH) - 1))
-    }
-}
-
-impl From<PhysAddr> for PhysPageNum {
-    fn from(v: PhysAddr) -> Self {
-        assert_eq!(v.page_offset(), 0);
-        v.floor()
     }
 }
 

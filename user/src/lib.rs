@@ -9,7 +9,6 @@ use syscall::*;
 #[no_mangle]
 #[link_section = ".text.entry"]
 pub extern "C" fn _start() -> ! {
-    clear_bss();
     exit(main());
     unreachable!()
 }
@@ -21,10 +20,6 @@ fn main() -> i32 {
 extern "C" {
     pub fn sbss();
     pub fn ebss();
-}
-
-fn clear_bss() {
-    (sbss as usize..ebss as usize).for_each(|a| unsafe { (a as *mut u8).write_volatile(0) })
 }
 
 pub fn write(fd: usize, buf: &[u8]) -> isize {

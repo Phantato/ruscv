@@ -13,7 +13,9 @@
 extern crate alloc;
 
 mod app;
+mod configs;
 mod console;
+mod kernel_heap;
 mod memory;
 mod sbi;
 mod sync;
@@ -34,7 +36,7 @@ pub fn rust_main(hartid: usize) -> ! {
             riscv::asm::wfi();
         }
     }
-    println!("RUSCV OS Booting on hart: {}", hartid);
+    info!("RUSCV OS Booting on hart: {}", hartid);
     info!(".text [{:#x}, {:#x})", stext as usize, etext as usize);
     info!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
     info!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
@@ -51,10 +53,8 @@ pub fn rust_main(hartid: usize) -> ! {
     clear_bss();
 
     memory::init();
+    memory::test();
 
-    trap::init();
-
-    app::print_loads();
     app::run_next();
 }
 
@@ -94,12 +94,12 @@ mod panic {
     fn panic(_info: &PanicInfo) -> ! {
         let unknown_info = format_args!("Unknown Reason");
         let msg = _info.message().unwrap_or(&unknown_info);
-        print_stack_trace();
         if let Some(loc) = _info.location() {
             println!("Kernel Paniced at {}:{} {}!", loc.file(), loc.line(), msg);
         } else {
             println!("{}", msg);
         }
+        print_stack_trace();
         shutdown()
     }
 
@@ -113,7 +113,7 @@ mod panic {
                 let saved_ra = *fp.sub(1);
                 let saved_fp = *fp.sub(2);
 
-                println!("0x{:016x}, fp = 0x{:016x}", saved_ra, saved_fp);
+                println!("ra = 0x{:016x}, fp = 0x{:016x}", saved_ra, saved_fp);
 
                 fp = saved_fp as *const usize;
             }

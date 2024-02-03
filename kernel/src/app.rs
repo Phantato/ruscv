@@ -1,192 +1,180 @@
 #![allow(unused)]
-use crate::{print, println, sbi, sync::UPSafeCell, trace, trap::TrapCtx};
-use core::{
-    arch::asm,
-    array,
-    borrow::Borrow,
-    default, ffi, fmt, hint,
-    mem::{self, MaybeUninit},
-    ops::AddAssign,
-};
+use alloc::{collections::VecDeque, sync::Arc};
 
-const USER_STACK_SIZE: usize = 4096 * 2;
-const KERNEL_STACK_SIZE: usize = 4096 * 2;
+use crate::{
+    memory::{
+        address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum},
+        kernel_stack_position,
+        memory_set::{MemorySet, SegmentPermission},
+        KERNEL_SPACE, TRAMPOLINE, TRAP_CONTEXT,
+    },
+    print, println,
+    sbi::{self, shutdown},
+    sync::UPSafeCell,
+    trace,
+    trap::{self, TrapCtx},
+};
+use core::{arch::asm, fmt};
+
 const MAX_APP_NUM: usize = 16;
-const APP_BASE_ADDRESS: usize = 0x80400000;
 const APP_SIZE_LIMIT: usize = 0x40000;
 
 lazy_static::lazy_static! {
-    static ref APP_MANAGER: UPSafeCell<AppManager> = unsafe {
-        UPSafeCell::new(AppManager::new())
+    static ref APP_MANAGER: UPSafeCell<TaskManager> = unsafe {
+        UPSafeCell::new(TaskManager::new())
     };
 }
-static KERNEL_STACK: KernelStack = KernelStack {
-    data: [0; KERNEL_STACK_SIZE],
-};
-static USER_STACK: UserStack = UserStack {
-    data: [0; USER_STACK_SIZE],
-};
 
-#[repr(align(4096))]
-struct KernelStack {
-    data: [usize; KERNEL_STACK_SIZE],
-}
-#[repr(align(4096))]
-struct UserStack {
-    data: [usize; USER_STACK_SIZE],
+pub struct ProcessControlBlock {
+    trap_ctx_addr: PhysAddr,
+    mem_set: MemorySet,
 }
 
-impl KernelStack {
-    fn get_bottom(&self) -> usize {
-        self.data.as_ptr() as usize + KERNEL_STACK_SIZE
+impl ProcessControlBlock {
+    pub fn trap_ctx(&self) -> &'static mut TrapCtx {
+        unsafe { self.trap_ctx_addr.get_mut().unwrap() }
     }
-    fn new_context(&self) -> *const TrapCtx {
-        let ctx_ptr = (self.get_bottom() - core::mem::size_of::<TrapCtx>()) as *mut TrapCtx;
-        unsafe {
-            *ctx_ptr = TrapCtx::new_app(APP_BASE_ADDRESS, USER_STACK.get_bottom());
+    pub fn satp(&self) -> usize {
+        self.mem_set.token()
+    }
+}
+
+// impl fmt::Display for TaskControlBlock {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(
+//             f,
+//             "\t[prog no.{}]:{:?}      \tstart from:{:#x},\tlen:{:#x}",
+//             self.seq_no,
+//             unsafe { ffi::CStr::from_ptr(self.name as *const _) },
+//             self.start,
+//             self.len
+//         )
+//     }
+// }
+
+impl ProcessControlBlock {
+    fn from_elf(elf: &[u8], task_id: usize) -> Self {
+        let (mem_set, sp, entry) = MemorySet::from_elf(elf);
+        let trap_ctx_addr: PhysAddr = mem_set
+            .translate(VirtAddr::from(TRAP_CONTEXT).floor())
+            .expect("TRAP_CONTEXT should be mapped")
+            .ppn()
+            .into();
+        let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(task_id);
+        {
+            KERNEL_SPACE.get_mut().push_empty_seg(
+                kernel_stack_bottom.into(),
+                kernel_stack_top.into(),
+                SegmentPermission::R, // | SegmentPermission::W,
+            );
         }
-        ctx_ptr
+        unsafe {
+            *trap_ctx_addr.get_mut().unwrap() =
+                TrapCtx::new_app(entry, sp, KERNEL_SPACE.get().token(), kernel_stack_top);
+        }
+        ProcessControlBlock {
+            trap_ctx_addr,
+            mem_set,
+        }
+    }
+
+    pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
+        let diff = va.0 - VirtAddr::from(va.floor()).0;
+        self.mem_set
+            .translate(va.floor())
+            .map(|pte| PhysAddr::from(pte.ppn()) + diff)
     }
 }
 
-impl UserStack {
-    fn get_bottom(&self) -> usize {
-        self.data.as_ptr() as usize + USER_STACK_SIZE
-    }
-}
-#[derive(Default, Clone, Copy)]
-struct App {
-    start: usize,
-    len: usize,
-    seq_no: usize,
-    name: usize,
-}
-
-impl fmt::Display for App {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "\t[prog no.{}]:{:?}      \tstart from:{:#x},\tlen:{:#x}",
-            self.seq_no,
-            unsafe { ffi::CStr::from_ptr(self.name as *const _) },
-            self.start,
-            self.len
-        )
-    }
-}
-
-struct AppManager {
+struct TaskManager {
     num: usize,
     next: usize,
-    load: [App; MAX_APP_NUM + 1],
+    load: VecDeque<Arc<ProcessControlBlock>>,
 }
 
-impl fmt::Display for AppManager {
+impl fmt::Display for TaskManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "num: {}\r", self.num)?;
-        writeln!(f, "current: {}\r", self.next - 1)?;
-        writeln!(f, "all loads: [\r")?;
-        for i in 0..self.num {
-            writeln!(f, "{}\r", self.load[i])?
-        }
-        writeln!(f, "]\r")
+        writeln!(f, "current: {}\r", self.next - 1)
     }
 }
 
-impl AppManager {
+impl TaskManager {
     pub unsafe fn new() -> Self {
         extern "C" {
             fn _num_app();
         }
-        let num_app_ptr = _num_app as *const usize;
-        let num = num_app_ptr.read_volatile();
-        println!("{}", num);
-        let mut load: [App; MAX_APP_NUM + 1] = Default::default();
-        let mut interval_cursor = num_app_ptr.add(1);
-        let mut name_cursor = interval_cursor.add(num + 1) as *const u8;
-
+        let num_ptr = _num_app as usize as *const usize;
+        let num = num_ptr.read_volatile();
+        trace!("task num: {}", num);
+        let mut load = VecDeque::new();
+        let app_start = unsafe { core::slice::from_raw_parts(num_ptr.add(1), num + 1) };
         for i in 0..num {
-            load[i].seq_no = i;
-            load[i].start = *interval_cursor;
-            interval_cursor = interval_cursor.add(1);
-            load[i].len = *interval_cursor - load[i].start;
-            load[i].name = name_cursor as usize;
-            while *name_cursor != 0 {
-                name_cursor = name_cursor.add(1);
-            }
-            name_cursor = name_cursor.add(1);
+            trace!("load task {}", i);
+            load.push_back(
+                ProcessControlBlock::from_elf(
+                    core::slice::from_raw_parts(
+                        app_start[i] as *const u8,
+                        app_start[i + 1] - app_start[i],
+                    ),
+                    i,
+                )
+                .into(),
+            )
         }
-
+        trace!("all task loaded");
         Self { num, load, next: 0 }
     }
-
-    unsafe fn load(&self, id: usize) {
-        if id >= self.num {
-            println!("no more app to execute");
-            sbi::shutdown()
+    fn get_next_task(&mut self) -> Option<Arc<ProcessControlBlock>> {
+        if self.next == self.load.len() {
+            None
+        } else {
+            self.next += 1;
+            Some(self.load[self.next - 1].clone())
         }
-        let app = &self.load[id];
-        trace!("[kernel] Loading app_{}", id);
-        // clear app area
-        core::slice::from_raw_parts_mut(APP_BASE_ADDRESS as *mut u8, APP_SIZE_LIMIT).fill(0);
-
-        let app_src = core::slice::from_raw_parts(app.start as *const u8, app.len);
-        let app_dst = core::slice::from_raw_parts_mut(APP_BASE_ADDRESS as *mut u8, app_src.len());
-        app_dst.copy_from_slice(app_src);
-        // memory fence about fetching the instruction memory
-        asm!("fence.i");
+    }
+    fn get_current_app(&self) -> Option<Arc<ProcessControlBlock>> {
+        if self.next == 0 {
+            None
+        } else {
+            Some(self.load[self.next - 1].clone())
+        }
     }
 }
 
 pub fn run_next() -> ! {
+    let task;
     {
-        let mut app_manager = APP_MANAGER.get_mut();
-        unsafe {
-            app_manager.load(app_manager.next);
-        }
-        app_manager.next += 1;
+        task = APP_MANAGER.get_mut().get_next_task()
     }
+    if let Some(task) = task {
+        restore_to_app(&task)
+    } else {
+        shutdown()
+    }
+}
 
+pub fn restore_to_app(app: &ProcessControlBlock) -> ! {
+    trap::init();
     extern "C" {
-        fn __restore(cx_addr: usize);
+        fn __alltraps();
+        fn __restore();
     }
+    let restore_va = __restore as usize - __alltraps as usize + TRAMPOLINE;
+    trace!("restore to app");
     unsafe {
-        __restore(KERNEL_STACK.new_context() as usize);
+        asm!(
+            "fence.i",
+            "jr {restore_va}",
+            restore_va = in(reg) restore_va,
+            in("a0") TRAP_CONTEXT,
+            in("a1") app.satp(),
+            options(noreturn)
+        );
     }
     unreachable!()
 }
 
-pub fn print_loads() {
-    let inner = APP_MANAGER.get();
-    println!("Loaded Apps: {}", inner);
-}
-
-pub fn addr_valid(addr: usize) -> bool {
-    let inner = APP_MANAGER.get();
-    let current_app = inner.load[inner.next - 1];
-    drop(inner);
-    let current_app_start = APP_BASE_ADDRESS;
-    let current_app_end = APP_BASE_ADDRESS + current_app.len;
-    if addr >= current_app_start && addr < current_app_end {
-        return true;
-    }
-    let stack_top: usize;
-    unsafe {
-        asm!("mv {}, sp", out(reg) stack_top);
-    }
-    if addr > stack_top && addr <= USER_STACK.get_bottom() {
-        return true;
-    }
-
-    return false;
-}
-
-pub fn current_instrument_location(addr: usize) -> usize {
-    addr
-    // let offset = addr - APP_BASE_ADDRESS;
-    // let inner = APP_MANAGER.get();
-    // let current_start = inner.load[inner.next - 1].start;
-    // println!("addr: {:#x}, start: {:#x}", addr, current_start);
-
-    // return current_start + offset;
+pub fn get_current_app() -> Option<Arc<ProcessControlBlock>> {
+    APP_MANAGER.get().get_current_app()
 }

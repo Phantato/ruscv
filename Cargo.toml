@@ -1,7 +1,7 @@
 [workspace]
-members=["kernel", "user"]
+members = ["kernel", "user"]
 resolver = "2"
 
 [profile.release]
-lto = true
+# lto = true
 debug = true

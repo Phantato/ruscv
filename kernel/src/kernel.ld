@@ -7,47 +7,48 @@ SECTIONS
     .       = BASE_ADDRESS;
     skernel = .;
 
-    stext   = .;
     .text : {
+        .           = ALIGN(4K);
+        stext       = .;
         *(.text.entry)
         *(.text .text.*)
-        .   = ALIGN(4K);
+        .           = ALIGN(4K);
         strampoline = .;
-        *(.text.trampoline)
+        *(.trampoline)
+        etext       = .;
     }
-    .       = ALIGN(4K);
-    etext   = .;
 
-    srodata = .;
     .rodata : {
+        .       = ALIGN(4K);
+        srodata = .;
         *(.rodata .rodata.*)
         *(.srodata .srodata.*)
+        erodata = .;
     }
-    .       = ALIGN(4K);
-    erodata = .;
 
-    sdata   = .;
     .data : {
+        .       = ALIGN(4K);
+        sdata   = .;
         *(.data .data.*)
         *(.sdata .sdata.*)
-    }
-    .       = ALIGN(4K);
-    edata   = .;
+        edata   = .;
+        .       = ALIGN(4K);
 
-    sbss    = .;
+        bstack  = .;
+        *(.boot_stack)
+        .       = ALIGN(4K);
+        tstack  = .;
+    }
+
     .bss : {
+        .       = ALIGN(4K);
+        sbss    = .;
         *(.bss .bss.*)
         *(.sbss .sbss.*)
+        ebss    = .;
     }
-    .       = ALIGN(4K);
-    ebss    = .;
 
     .       = ALIGN(4K);
-    bstack  = .;
-    .      += 4K;
-    .       = ALIGN(4K);
-    tstack  = .;
-
     ekernel = .;
     /DISCARD/ : {
         *(.eh_frame)

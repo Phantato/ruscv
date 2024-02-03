@@ -4,9 +4,8 @@ include utils.mk
 TARGET = riscv64gc-unknown-none-elf
 TARGET_DIR := target/$(TARGET)/release
 
-COMPILER_ARGS = -D warnings		\
-	-C force-frame-pointers=yes
-
+COMPILER_ARGS = -C force-frame-pointers=yes \
+#	-D warnings
 COMPILER_FLAG := --target=$(TARGET) --release
 
 RUSTC_CMD   = cargo rustc $(COMPILER_FLAG)
