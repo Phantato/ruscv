@@ -150,7 +150,7 @@ pub fn run_next() -> ! {
     if let Some(task) = task {
         restore_to_app(&task)
     } else {
-        shutdown()
+        shutdown(false)
     }
 }
 

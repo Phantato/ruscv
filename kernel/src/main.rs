@@ -100,7 +100,7 @@ mod panic {
             println!("{}", msg);
         }
         print_stack_trace();
-        shutdown()
+        shutdown(true)
     }
 
     pub fn print_stack_trace() -> () {
