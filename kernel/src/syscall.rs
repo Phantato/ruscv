@@ -1,5 +1,4 @@
-const MAX_MSG_LEN: usize = 32;
-
+pub const MAX_MSG_LEN: usize = 32;
 const SYSCALL_WRITE: usize = 64;
 const SYSCALL_EXIT: usize = 93;
 
@@ -8,17 +7,20 @@ use self::{fs::sys_write, process::*};
 use crate::fmt_str;
 
 /// handle syscall exception with `syscall_id` and other arguments
-pub fn syscall(syscall_id: usize, args: [usize; 3]) -> Result<isize, [u8; MAX_MSG_LEN]> {
-    let mut buf = [0u8; MAX_MSG_LEN];
+pub fn syscall(
+    syscall_id: usize,
+    args: [usize; 3],
+    error: &mut [u8; MAX_MSG_LEN],
+) -> Result<isize, ()> {
     match syscall_id {
         SYSCALL_WRITE => sys_write(args[0], args[1], args[2]).or_else(|msg| {
-            fmt_str!(&mut buf, "{}", msg).unwrap();
-            Err(buf)
+            fmt_str!(error, "{}", msg).unwrap();
+            Err(())
         }),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
         _ => {
-            fmt_str!(&mut buf, "Unsupported syscall_id: {:#x}", syscall_id).unwrap();
-            Err(buf)
+            fmt_str!(error, "Unsupported syscall_id: {:#x}", syscall_id).unwrap();
+            Err(())
         }
     }
 }
@@ -28,28 +30,25 @@ mod fs {
     use alloc::vec::Vec;
 
     use crate::{
-        app::{self, ProcessControlBlock},
         memory::VirtAddr,
-        print, println,
+        print,
+        process::{ProcessControlBlock, PROCESS_MANAGER},
     };
 
     const FD_STDOUT: usize = 1;
 
     /// write buf of length `len` to a file with `fd`
     pub fn sys_write(fd: usize, buf: usize, len: usize) -> Result<isize, &'static str> {
-        if let Some(task) = app::get_current_app() {
-            let contents = get_strs(buf, len, &task)?;
-            match fd {
-                FD_STDOUT => {
-                    for ele in contents {
-                        print!("{}", ele);
-                    }
-                    Ok(len as isize)
+        let task = PROCESS_MANAGER.get_current_process();
+        let contents = get_strs(buf, len, &task)?;
+        match fd {
+            FD_STDOUT => {
+                for ele in contents {
+                    print!("{}", ele);
                 }
-                _ => Err("Unsupported fd in sys_write!"),
+                Ok(len as isize)
             }
-        } else {
-            unreachable!("Should have an task running")
+            _ => Err("Unsupported fd in sys_write!"),
         }
     }
 
@@ -77,11 +76,11 @@ mod fs {
 }
 
 mod process {
-    use crate::{app, info};
+    use crate::{info, process};
 
     /// task exits and submit an exit code
     pub fn sys_exit(exit_code: i32) -> ! {
         info!("[kernel] Application exited with code {}", exit_code);
-        app::run_next()
+        process::run_next_process()
     }
 }

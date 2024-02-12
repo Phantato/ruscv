@@ -12,15 +12,15 @@
 #[macro_use]
 extern crate alloc;
 
-mod app;
 mod configs;
 mod console;
 mod kernel_heap;
 mod memory;
+mod process;
+mod processor;
 mod sbi;
 mod sync;
 mod syscall;
-mod trap;
 mod utils;
 
 use crate::kernel_address::*;
@@ -55,7 +55,7 @@ pub fn rust_main(hartid: usize) -> ! {
     memory::init();
     memory::test();
 
-    app::run_next();
+    process::run_next_process();
 }
 
 fn clear_bss() {
@@ -86,8 +86,7 @@ mod kernel_address {
 }
 
 mod panic {
-    use crate::println;
-    use crate::sbi::shutdown;
+    use crate::{println, sbi::shutdown};
     use core::{arch::asm, panic::PanicInfo, ptr};
 
     #[panic_handler]
