@@ -7,7 +7,6 @@ struct TempPage {
     vpn: VirtPageNum,
 }
 
-#[allow(unused)]
 impl TempPage {
     pub fn map(&mut self, ppn: PhysPageNum, page_table: &mut PageTable) -> VirtAddr {
         // TODO: use a custome allocator to avoid frame allocate every time

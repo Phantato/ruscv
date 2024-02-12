@@ -1,4 +1,3 @@
-#![allow(unused)]
 use core::cell::{Ref, RefCell, RefMut};
 
 pub struct UPSafeCell<T> {

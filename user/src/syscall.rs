@@ -2,6 +2,7 @@ use core::arch::asm;
 
 const SYSCALL_WRITE: usize = 64;
 const SYSCALL_EXIT: usize = 93;
+const SYSCALL_YIELD: usize = 124;
 
 #[inline(always)]
 fn sys_call(op: usize, args: [usize; 3]) -> isize {

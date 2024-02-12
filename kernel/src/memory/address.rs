@@ -70,6 +70,9 @@ impl VirtAddr {
     pub fn ceil(&self) -> VirtPageNum {
         VirtPageNum((self.0 + PAGE_SIZE - 1) >> PAGE_SIZE_BITS)
     }
+    pub fn offset(&self) -> usize {
+        self.0 & ((1 << PAGE_SIZE_BITS) - 1)
+    }
 }
 impl From<usize> for VirtAddr {
     fn from(v: usize) -> Self {

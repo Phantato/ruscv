@@ -17,9 +17,9 @@ use crate::{
 };
 
 use super::{
-    address::{PhysPageNum, VirtAddr, VirtPageNum},
+    address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum},
     frame_allocator::{frame_alloc, PageFrame},
-    page_table::{PTEFlags, PageTable, PageTableEntry},
+    page_table::{PTEFlags, PageTable},
     MEMORY_END, PAGE_SIZE,
 };
 
@@ -46,7 +46,6 @@ struct Segment {
     seg_perm: SegmentPermission,
 }
 
-#[allow(unused)]
 impl Segment {
     fn new(
         start: VirtAddr,
@@ -109,10 +108,10 @@ impl Segment {
         match self.seg_type {
             SegmentType::Framed => {
                 self.data_frames.remove(&vpn);
-                page_table.unmap(vpn)
             }
             SegmentType::Linear(_) => {}
         }
+        page_table.unmap(vpn)
     }
 }
 
@@ -121,7 +120,6 @@ pub struct MemorySet {
     segments: Vec<Segment>,
 }
 
-#[allow(unused)]
 impl MemorySet {
     // /// Include sections in elf and trampoline and TrapContext and user stack,
     // /// also returns user_sp and entry point.
@@ -131,9 +129,9 @@ impl MemorySet {
         memory_set.map_trampoline(
             KERNEL_SPACE
                 .get()
-                .translate(VirtAddr::from(strampoline as usize).floor())
+                .translate(VirtAddr::from(strampoline as usize))
                 .expect("text seg should be mapped!")
-                .ppn(),
+                .floor(),
         );
         // map program headers of elf, with U flag
         let elf = xmas_elf::ElfFile::new(elf_data).unwrap();
@@ -168,8 +166,8 @@ impl MemorySet {
                     "map [0x{:x}, 0x{:x}) to [0x{:x}, 0x{:x})",
                     start_va.0,
                     end_va.0,
-                    memory_set.translate(start_va.floor()).unwrap().ppn().0,
-                    memory_set.translate(end_va.ceil()).unwrap().ppn().0,
+                    memory_set.translate(start_va).unwrap().floor().0,
+                    memory_set.translate(end_va).unwrap().ceil().0,
                 )
             }
         }
@@ -229,17 +227,6 @@ impl MemorySet {
                 slice::from_raw_parts(srodata as *const u8, erodata as usize - srodata as usize)
             }),
         );
-        // Need to Manually copy data in order to avoid frame allocator conflict.
-        kernel.push(
-            Segment::new(
-                (sdata as usize).into(),
-                (edata as usize).into(),
-                SegmentType::Framed,
-                SegmentPermission::R | SegmentPermission::W,
-            ),
-            None,
-        );
-        let data_seg_idx = kernel.segments.len() - 1;
         kernel.push(
             Segment::new(
                 (sbss as usize).into(),
@@ -247,9 +234,10 @@ impl MemorySet {
                 SegmentType::Framed,
                 SegmentPermission::R | SegmentPermission::W,
             ),
-            None,
+            Some(unsafe {
+                slice::from_raw_parts(sbss as *const u8, ebss as usize - sbss as usize)
+            }),
         );
-        let bss_seg_idx = kernel.segments.len() - 1;
         kernel.push(
             Segment::new(
                 (bstack as usize).into(),
@@ -257,9 +245,10 @@ impl MemorySet {
                 SegmentType::Framed,
                 SegmentPermission::R | SegmentPermission::W,
             ),
-            None,
+            Some(unsafe {
+                slice::from_raw_parts(bstack as *const u8, tstack as usize - bstack as usize)
+            }),
         );
-        let stack_seg_idx = kernel.segments.len() - 1;
         kernel.push(
             Segment::new(
                 (ekernel as usize).into(),
@@ -272,32 +261,30 @@ impl MemorySet {
         // trampoline page need to be manually configured.
         kernel.map_trampoline(
             kernel
-                .translate(VirtAddr::from(strampoline as usize).floor())
+                .translate(VirtAddr::from(strampoline as usize))
                 .unwrap()
-                .ppn(),
+                .floor(),
         );
 
-        kernel.segments[data_seg_idx].copy_data(unsafe {
-            slice::from_raw_parts(sdata as *const u8, edata as usize - sdata as usize)
-        });
-        kernel.segments[bss_seg_idx].copy_data(unsafe {
-            slice::from_raw_parts(sbss as *const u8, ebss as usize - sbss as usize)
-        });
-        kernel.segments[stack_seg_idx].copy_data(unsafe {
-            slice::from_raw_parts(bstack as *const u8, tstack as usize - bstack as usize)
-        });
+        kernel.push(
+            Segment::new(
+                (sdata as usize).into(),
+                (edata as usize).into(),
+                SegmentType::Framed,
+                SegmentPermission::R | SegmentPermission::W,
+            ),
+            Some(unsafe {
+                slice::from_raw_parts(sdata as *const u8, edata as usize - sdata as usize)
+            }),
+        );
+
         kernel.activate();
         kernel
     }
 
     pub fn push_empty_seg(&mut self, start: VirtAddr, end: VirtAddr, seg_perm: SegmentPermission) {
         self.push(
-            Segment::new(
-                start,
-                end,
-                SegmentType::Framed,
-                SegmentPermission::R | SegmentPermission::W,
-            ),
+            Segment::new(start, end, SegmentType::Framed, seg_perm),
             None,
         );
     }
@@ -306,8 +293,8 @@ impl MemorySet {
         self.page_table.token()
     }
 
-    pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        self.page_table.translate(vpn)
+    pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
+        self.page_table.translate(va)
     }
 
     fn map_trampoline(&mut self, trampoline_ppn: PhysPageNum) {
@@ -351,7 +338,7 @@ pub fn remap_test() {
     assert_eq!(
         kernel_space
             .page_table
-            .translate(mid_text.floor())
+            .get_pte(mid_text.floor())
             .unwrap()
             .writable(),
         false
@@ -359,7 +346,7 @@ pub fn remap_test() {
     assert_eq!(
         kernel_space
             .page_table
-            .translate(mid_rodata.floor())
+            .get_pte(mid_rodata.floor())
             .unwrap()
             .writable(),
         false,
@@ -367,7 +354,7 @@ pub fn remap_test() {
     assert_eq!(
         kernel_space
             .page_table
-            .translate(mid_data.floor())
+            .get_pte(mid_data.floor())
             .unwrap()
             .executable(),
         false,
