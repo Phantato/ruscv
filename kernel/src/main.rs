@@ -57,7 +57,7 @@ pub fn rust_main(hartid: usize) -> ! {
     memory::init();
     memory::test();
 
-    process::run_next_process();
+    process::start()
 }
 
 fn clear_bss() {

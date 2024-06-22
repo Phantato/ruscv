@@ -26,3 +26,7 @@ pub fn sys_exit(xstate: i32) -> ! {
     sys_call(SYSCALL_EXIT, [xstate as usize, 0, 0]);
     unreachable!("program should exited!")
 }
+
+pub fn sys_yield() -> isize {
+    sys_call(SYSCALL_YIELD, [0, 0, 0])
+}

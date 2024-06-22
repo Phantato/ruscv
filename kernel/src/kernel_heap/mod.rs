@@ -58,19 +58,21 @@ pub fn test() {
         let start = KERNEL_HEAP.as_ptr() as usize;
         let end = start + KERNEL_HEAP_SIZE;
         let heap_range = start..end;
-        let a = Box::new(5);
-        assert_eq!(*a, 5);
-        assert!(heap_range.contains(&(a.as_ref() as *const _ as usize)));
-        drop(a);
-        let mut v: Vec<usize> = vec![];
-        for i in 0..500 {
-            v.push(i);
+        {
+            let a = Box::new(5);
+            assert_eq!(*a, 5);
+            assert!(heap_range.contains(&(a.as_ref() as *const _ as usize)));
         }
-        for i in 0..500 {
-            assert_eq!(v[i], i);
+        {
+            let mut v: Vec<usize> = vec![];
+            for i in 0..500 {
+                v.push(i);
+            }
+            for i in 0..500 {
+                assert_eq!(v[i], i);
+            }
+            assert!(heap_range.contains(&(v.as_ptr() as usize)));
         }
-        assert!(heap_range.contains(&(v.as_ptr() as usize)));
-        drop(v);
         info!("heap_test passed!");
     }
 }

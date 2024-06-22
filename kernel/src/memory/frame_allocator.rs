@@ -116,16 +116,17 @@ pub fn frame_alloc() -> Option<PageFrame> {
 
 #[allow(unused)]
 pub fn frame_allocator_test() {
-    let mut v: Vec<PageFrame> = vec![];
-    for i in 0..5 {
-        let frame = frame_alloc().unwrap();
-        v.push(frame);
+    {
+        let mut v: Vec<PageFrame> = vec![];
+        for i in 0..5 {
+            let frame = frame_alloc().unwrap();
+            v.push(frame);
+        }
+        v.clear();
+        for i in 0..5 {
+            let frame = frame_alloc().unwrap();
+            v.push(frame);
+        }
     }
-    v.clear();
-    for i in 0..5 {
-        let frame = frame_alloc().unwrap();
-        v.push(frame);
-    }
-    drop(v);
     info!("frame_allocator_test passed!");
 }

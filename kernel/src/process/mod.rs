@@ -1,11 +1,9 @@
 mod status;
 use self::status::ProcessStatus;
-use crate::info;
 use crate::memory::{kernel_stack_position, memory_set::SegmentPermission, KERNEL_SPACE};
 use crate::{
     error,
     memory::{address::PhysAddr, memory_set::MemorySet, VirtAddr, TRAMPOLINE, TRAP_CONTEXT},
-    println,
     sbi::shutdown,
     sync::UPSafeCell,
     syscall::{syscall, MAX_MSG_LEN},
@@ -77,6 +75,28 @@ impl ProcessManager {
         Self { num, inner }
     }
 
+    fn start(&self) -> ! {
+        self.run_next_process(&mut SwitchCtx::zero() as *mut SwitchCtx);
+        unreachable!("unreachable in ProcessManager::start")
+    }
+
+    pub fn run_next_process(&self, current_ctx: *mut SwitchCtx) {
+        match self.find_next_ready_task() {
+            Some(pcb) => {
+                let next_ctx = {
+                    let mut inner = pcb.inner.get_mut();
+                    inner.status = ProcessStatus::Running;
+                    &inner.switch_ctx as *const SwitchCtx
+                };
+                {
+                    let mut inner = self.inner.get_mut();
+                    inner.current = pcb.pid;
+                }
+                unsafe { __switch(current_ctx, next_ctx) }
+            }
+            None => shutdown(false),
+        }
+    }
     fn find_next_ready_task(&self) -> Option<Arc<ProcessControlBlock>> {
         let inner = self.inner.get_mut();
         let current = inner.current;
@@ -84,19 +104,16 @@ impl ProcessManager {
             .map(|idx| inner.load[idx % self.num].clone())
             .find(|pcb| pcb.inner.get().status == ProcessStatus::Ready)
     }
-
     fn mark_current_suspended(&self) {
         let inner = self.inner.get_mut();
         let mut pcb_inner = inner.load[inner.current].inner.get_mut();
         pcb_inner.status = ProcessStatus::Ready
     }
-
     fn mark_current_exited(&self) {
         let inner = self.inner.get_mut();
         let mut pcb_inner = inner.load[inner.current].inner.get_mut();
         pcb_inner.status = ProcessStatus::Exited
     }
-
     pub fn get_current_process(&self) -> Option<Arc<ProcessControlBlock>> {
         let inner: core::cell::Ref<'_, ProcessManagerInner> = self.inner.get();
         if inner.current == self.num {
@@ -104,6 +121,15 @@ impl ProcessManager {
         } else {
             Some(inner.load[inner.current].clone())
         }
+    }
+    fn get_current_switch_ctx(&self) -> *mut SwitchCtx {
+        let pcb = self.get_current_process().unwrap();
+        let mut inner = pcb.inner.get_mut();
+        &mut inner.switch_ctx as *mut SwitchCtx
+    }
+    fn get_current_satp(&self) -> usize {
+        let pcb = self.get_current_process().unwrap();
+        pcb.satp()
     }
 }
 
@@ -132,7 +158,6 @@ impl ProcessControlBlock {
             inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::from_elf(elf, task_id)) },
         }
     }
-
     pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
         self.inner.get().mem_set.translate(va)
     }
@@ -230,18 +255,23 @@ fn set_user_trap_entry() {
     }
 }
 
+pub fn start() -> ! {
+    PROCESS_MANAGER.start()
+}
+
 pub fn get_current_process() -> Arc<ProcessControlBlock> {
     PROCESS_MANAGER.get_current_process().unwrap()
 }
 
 pub fn suspend_current() {
     PROCESS_MANAGER.mark_current_suspended();
-    run_next_process()
+    PROCESS_MANAGER.run_next_process(PROCESS_MANAGER.get_current_switch_ctx())
 }
 
 pub fn exit_current() -> ! {
     PROCESS_MANAGER.mark_current_exited();
-    run_next_process()
+    PROCESS_MANAGER.run_next_process(PROCESS_MANAGER.get_current_switch_ctx());
+    unreachable!("process is exited");
 }
 
 #[no_mangle]
@@ -279,35 +309,22 @@ fn trap_from_user() -> ! {
             panic!("Unsupported trap {:?}, stval = {:#x}!", x, stval::read());
         }
     } {
-        Ok(_) => restore_to_user(pcb),
+        Ok(_) => restore_to_user(),
         Err(hint) => kernel_fail(ctx.sepc, hint),
     }
 }
 
 fn kernel_fail(inst_addr: usize, hint: &str) -> ! {
     let pid = get_current_process().pid;
-    error!("[kernel] {}, pid: {}", hint, pid);
+    error!("[kernel] {} pid: {}", hint, pid);
     error!("[kernel] instrument at {:#x}", inst_addr);
 
     exit_current();
 }
 
-pub fn run_next_process() -> ! {
-    match PROCESS_MANAGER.find_next_ready_task() {
-        Some(pcb) => {
-            let mut inner = PROCESS_MANAGER.inner.get_mut();
-            inner.current = pcb.pid;
-            drop(inner);
-            restore_to_user(pcb)
-        }
-        None => shutdown(false),
-    }
-}
-
-fn restore_to_user(pcb: Arc<ProcessControlBlock>) -> ! {
+fn restore_to_user() -> ! {
     set_user_trap_entry();
-    let satp = pcb.satp();
-    drop(pcb);
+    let satp = PROCESS_MANAGER.get_current_satp();
     extern "C" {
         fn __alltraps();
         fn __restore();
