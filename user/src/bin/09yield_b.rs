@@ -8,8 +8,8 @@ extern crate user_lib;
 
 #[no_mangle]
 fn main() -> i32 {
-    println!("b befor yield");
+    println!("b befor yield.");
     yield_();
-    println!("b after yield");
+    println!("b after yield.");
     0
 }

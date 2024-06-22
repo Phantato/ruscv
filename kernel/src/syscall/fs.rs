@@ -30,6 +30,7 @@ fn get_strs(
 ) -> Result<Vec<&str>, &'static str> {
     let mut ret = vec![];
     while len > 0 {
+        // TODO: this is not safe, because we haven't check the permission.
         if let Some(pa) = task.translate(buf.into()) {
             let diff = (VirtAddr::from(VirtAddr::from(buf + 1).ceil()).0 - buf).clamp(0, len);
             assert!(diff > 0);

@@ -12,6 +12,9 @@
 #[macro_use]
 extern crate alloc;
 
+#[path = "boards/qemu.rs"]
+mod board;
+
 mod configs;
 mod console;
 mod kernel_heap;
@@ -20,6 +23,7 @@ mod process;
 mod sbi;
 mod sync;
 mod syscall;
+mod timer;
 mod utils;
 
 use crate::kernel_address::*;
@@ -57,6 +61,9 @@ pub fn rust_main(hartid: usize) -> ! {
     memory::init();
     memory::test();
 
+    process::enable_timer_interrupt();
+    timer::set_next_trigger();
+
     process::start()
 }
 
@@ -93,8 +100,8 @@ mod panic {
 
     #[panic_handler]
     fn panic(_info: &PanicInfo) -> ! {
-        let unknown_info = format_args!("Unknown Reason");
-        let msg = _info.message().unwrap_or(&unknown_info);
+        let unknown_info = "Unknown Reason";
+        let msg = _info.message().as_str().unwrap_or(&unknown_info);
         if let Some(loc) = _info.location() {
             println!("Kernel Paniced at {}:{} {}!", loc.file(), loc.line(), msg);
         } else {

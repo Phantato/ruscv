@@ -1,6 +1,7 @@
 mod status;
 use self::status::ProcessStatus;
 use crate::memory::{kernel_stack_position, memory_set::SegmentPermission, KERNEL_SPACE};
+use crate::timer::set_next_trigger;
 use crate::{
     error,
     memory::{address::PhysAddr, memory_set::MemorySet, VirtAddr, TRAMPOLINE, TRAP_CONTEXT},
@@ -11,6 +12,8 @@ use crate::{
 };
 use alloc::{collections::VecDeque, sync::Arc};
 use core::arch::{asm, global_asm};
+use riscv::register::scause::Interrupt;
+use riscv::register::sie;
 use riscv::register::{
     scause::{self, Exception, Trap},
     sstatus::{self, Sstatus},
@@ -104,7 +107,7 @@ impl ProcessManager {
             .map(|idx| inner.load[idx % self.num].clone())
             .find(|pcb| pcb.inner.get().status == ProcessStatus::Ready)
     }
-    fn mark_current_suspended(&self) {
+    fn mark_current_ready(&self) {
         let inner = self.inner.get_mut();
         let mut pcb_inner = inner.load[inner.current].inner.get_mut();
         pcb_inner.status = ProcessStatus::Ready
@@ -264,7 +267,7 @@ pub fn get_current_process() -> Arc<ProcessControlBlock> {
 }
 
 pub fn suspend_current() {
-    PROCESS_MANAGER.mark_current_suspended();
+    PROCESS_MANAGER.mark_current_ready();
     PROCESS_MANAGER.run_next_process(PROCESS_MANAGER.get_current_switch_ctx())
 }
 
@@ -287,6 +290,11 @@ fn trap_from_user() -> ! {
     let pcb = get_current_process();
     let ctx = pcb.trap_ctx();
     match match scause::read().cause() {
+        Trap::Interrupt(Interrupt::SupervisorTimer) => {
+            set_next_trigger();
+            suspend_current();
+            Ok(())
+        }
         Trap::Exception(Exception::UserEnvCall) => {
             trace!("user call id: 0x{:x}", ctx.x[17]);
             let res = syscall(ctx.x[17], [ctx.x[10], ctx.x[11], ctx.x[12]], &mut buf);
@@ -340,5 +348,11 @@ fn restore_to_user() -> ! {
             in("a1") satp,
             options(noreturn)
         );
+    }
+}
+
+pub fn enable_timer_interrupt() {
+    unsafe {
+        sie::set_stimer();
     }
 }

@@ -83,3 +83,7 @@ objdump: $(KERNEL_ELF)
 nm: $(KERNEL_ELF)
 	$(call color_header, "Launching nm")
 	@$(NM_BINARY) --demangle --print-size $(KERNEL_ELF) | sort | rustfilt
+
+dtb:
+	qemu-system-riscv64 -M virt,dumpdtb=dump.dtb
+	dtc -o dump.dts dump.dtb

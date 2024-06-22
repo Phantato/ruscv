@@ -1,3 +1,5 @@
 target
 kernel.bin
 rustsbi
+dump.dtb
+dump.dts

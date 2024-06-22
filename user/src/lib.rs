@@ -33,14 +33,18 @@ pub fn yield_() -> isize {
     sys_yield()
 }
 
+pub fn get_time() -> isize {
+    sys_get_time()
+}
+
 mod panic {
     use crate::{println, syscall};
     use core::panic::PanicInfo;
 
     #[panic_handler]
     fn panic(_info: &PanicInfo) -> ! {
-        let unknown_info = format_args!("Unknown Reason");
-        let msg = _info.message().unwrap_or(&unknown_info);
+        let unknown_info = "Unknown Reason";
+        let msg = _info.message().as_str().unwrap_or(&unknown_info);
         if let Some(loc) = _info.location() {
             println!(
                 "\x1b[31m[Panic] at {}:{} {}!\x1b[0m",
