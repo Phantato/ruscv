@@ -1,0 +1,472 @@
+#+TITLE: ruscv — Exploration Plan & Roadmap
+#+AUTHOR: ruscv contributors
+#+STARTUP: overview
+#+TODO: TODO IN-PROGRESS | DONE CANCELLED
+
+* About This Plan
+
+This document captures the exploration roadmap for ruscv, an educational
+RISC-V 64-bit OS kernel written in Rust. The goal is deep understanding of
+modern OS internals — not production quality, but principled design and
+hands-on learning.
+
+Each section groups related work. Items are ordered roughly by dependency
+(foundational work first). Features marked /Enhancement/ improve existing
+code; features marked /New/ introduce entirely new subsystems.
+
+* Phase 1 — Fix Known Issues & Harden Foundations
+:PROPERTIES:
+:CATEGORY: foundations
+:END:
+
+** TODO [Enhancement] Fix physical frame leak on =unmap()=
+- =page_table.rs:unmap()= clears the PTE but never releases the physical
+  frame. This is a memory leak marked FIXME in the code.
+- When unmapping a =Framed= segment, the =PageFrame= should be dropped
+  (returned to the frame allocator).
+- Study: how does Linux handle PTE teardown and frame release? What about
+  reference counting for shared pages?
+
+** TODO [Enhancement] Fix =MEMORY_END= inconsistency
+- =memory/mod.rs= defines =MEMORY_END = 0x8080_0000= (8 MiB), while
+  =boards/qemu.rs= defines =MEMORY_END = 0x8800_0000= (128 MiB).
+- The frame allocator uses the =mod.rs= value, limiting usable RAM to ~8 MiB.
+- Unify to use the board-level constant and verify the frame allocator
+  handles the larger range correctly.
+
+** TODO [Enhancement] Validate user pointers in syscalls
+- [[file:page_permission_fix.md][analysis]]
+- =sys_write= and =sys_get_time= translate user VAs to PAs without checking
+  permissions (TODOs in code).
+- Implement a =validate_user_buffer(va, len, writable)= helper that walks
+  the page table and checks the =U=, =R=, =W= flags before access.
+- Study: how does Linux =copy_from_user= / =copy_to_user= work? What about
+  SMAP/SMEP equivalents on RISC-V (SUM bit in =sstatus=)?
+
+** TODO [Enhancement] Reclaim exited process resources
+- Exited processes remain in the =VecDeque= forever; their =MemorySet= and
+  kernel stack are never freed.
+- Implement proper cleanup: release user address space, unmap kernel stack,
+  remove PCB from the process list.
+- This lays groundwork for dynamic process creation.
+
+** TODO [Enhancement] Increase boot and kernel stack sizes
+- Boot stack is 1 page (4 KiB). Kernel per-process stack is also 4 KiB.
+- Increase boot stack to at least 16 KiB and per-process kernel stack to
+  8–16 KiB to prevent stack overflow during complex trap handling.
+- Study: what kernel stack sizes do Linux and xv6 use? What are the
+  trade-offs?
+
+* Phase 2 — Process Lifecycle & IPC
+:PROPERTIES:
+:CATEGORY: process
+:END:
+
+** TODO [New] Implement =fork()= syscall
+- Create a child process by duplicating the parent's address space.
+- Initially: deep-copy all =Framed= segments (allocate new frames, copy
+  data). Later: implement copy-on-write (Phase 5).
+- Assign a new PID. Set up parent-child relationship.
+- Study: how does =fork()= interact with the page table? What state is
+  shared vs. copied? How does Linux's =clone()= generalize this?
+
+** TODO [New] Implement =exec()= syscall
+- Replace the current process's address space with a new ELF image.
+- Reuse =MemorySet::from_elf()= and reinitialize the trap context with the
+  new entry point and fresh user stack.
+- Study: how does the kernel find the ELF to load? (For now: by name from
+  the embedded app table. Later: from a filesystem.)
+
+** TODO [New] Implement =waitpid()= / =wait()= syscall
+- Allow a parent process to wait for a child to exit and collect its exit
+  code.
+- Requires: parent-child tree, zombie state, exit code storage.
+- Study: POSIX semantics of =waitpid()=, orphan processes, the =init=
+  process as the universal reaper.
+
+** TODO [New] Implement =getpid()= and =getppid()= syscalls
+- Simple syscalls that return the current PID and parent PID.
+- Requires the PCB to store =pid= and =parent_pid= fields.
+
+** TODO [New] Implement =pipe()= syscall
+- Create a unidirectional byte stream between two file descriptors.
+- Requires: a ring buffer (bounded, blocking on full/empty), a file
+  descriptor table per process.
+- Study: Linux pipe implementation, =O_NONBLOCK= semantics, pipe capacity.
+
+** TODO [New] Implement signals (basic)
+- Support =kill(pid, signal)= and a default signal handler.
+- Start with =SIGKILL= (uncatchable termination) and =SIGTERM=.
+- Study: how does the kernel deliver a signal? Stack frame manipulation for
+  user-space signal handlers. Signal masks and pending sets.
+
+** TODO [Enhancement] Implement a proper PID allocator
+- Currently PIDs are just indices into the process array.
+- Implement a recycling PID allocator (bitmap or incrementing counter with
+  wraparound).
+
+* Phase 3 — File System & I/O Abstraction
+:PROPERTIES:
+:CATEGORY: filesystem
+:END:
+
+** TODO [New] Design a VFS (Virtual File System) layer
+- Abstract file operations behind a trait: =open=, =read=, =write=,
+  =close=, =stat=, =seek=.
+- Every open file is represented by a =File= trait object.
+- Per-process file descriptor table (=Vec<Option<Arc<dyn File>>>=).
+- Study: Linux VFS architecture (superblock, inode, dentry, file). Start
+  simple and iterate.
+
+** TODO [New] Implement =stdin= / =stdout= / =stderr= as file descriptors
+- Wrap SBI console I/O in =File= trait objects.
+- Allocate fd 0/1/2 at process creation.
+- Refactor =sys_write= to dispatch through the fd table.
+
+** TODO [New] Implement =read= syscall
+- Read from a file descriptor into a user buffer.
+- First consumer: =stdin= (blocking read from SBI console or UART driver).
+
+** TODO [New] Implement a simple in-memory filesystem (ramfs/tmpfs)
+- A tree of inodes in kernel heap memory.
+- Support: regular files, directories, =open=, =read=, =write=, =mkdir=,
+  =ls= (=getdents=).
+- Study: how tmpfs works in Linux. Inode allocation, directory entries.
+
+** TODO [New] Implement a block device driver (virtio-blk)
+- QEMU virt provides a virtio block device.
+- Write a virtio-blk driver: initialize the device, set up virtqueues,
+  submit read/write requests.
+- Study: the virtio specification (especially virtio-blk), MMIO transport,
+  descriptor chains, available/used rings.
+
+** TODO [New] Implement a disk-backed filesystem (FAT32 or ext2-like)
+- With a block device available, implement a real filesystem.
+- FAT32 is simpler; a simplified ext2 teaches more about inode-based designs.
+- Support: mounting the root filesystem, =open=, =read=, =write=, =mkdir=,
+  =unlink=.
+- Study: FAT32 specification (BPB, FAT table, directory entries, long file
+  names) or ext2 (superblock, block groups, inodes, directory entries).
+
+** TODO [New] Implement =dup= / =dup2= syscalls
+- Duplicate a file descriptor. Needed for shell I/O redirection.
+
+** TODO [New] Implement =mmap= for file-backed mappings
+- Map a file's contents into user virtual memory.
+- Ties together the VM subsystem and the filesystem.
+- Study: demand paging with file-backed pages, page cache.
+
+* Phase 4 — Device Drivers & Hardware Interaction
+:PROPERTIES:
+:CATEGORY: drivers
+:END:
+
+** TODO [New] Implement a UART driver (16550A / ns16550)
+- Replace SBI legacy =console_putchar= with a direct UART driver.
+- QEMU virt exposes a 16550-compatible UART at a known MMIO address.
+- Implement: register layout, initialization, polling and interrupt-driven
+  TX/RX, ring buffer for received characters.
+- Study: 16550A register map, FIFO control, interrupt enable.
+
+** TODO [New] Map MMIO regions in the kernel page table
+- =boards/qemu.rs= defines MMIO ranges but they are never mapped.
+- Add MMIO mappings (device memory: uncacheable, no-execute) to
+  =MemorySet::new_kernel()=.
+- Study: device memory attributes (strongly ordered, non-cacheable) on
+  RISC-V. PMA vs PMP.
+
+** TODO [New] Implement PLIC (Platform-Level Interrupt Controller) driver
+- The QEMU virt machine uses a PLIC for external interrupts.
+- Implement: discover interrupt sources, set priorities, enable/disable
+  per-hart, claim/complete interrupts.
+- Required for interrupt-driven UART, virtio, and any other device.
+- Study: RISC-V PLIC specification, interrupt delegation, =sie=.=SEIE= bit.
+
+** TODO [Enhancement] Handle kernel-mode traps properly
+- =trap_from_kernel()= currently panics unconditionally.
+- Handle at least: timer interrupts in kernel mode (for preemptible kernel
+  or kernel profiling), external device interrupts (PLIC).
+- Study: nested interrupt handling, kernel preemption.
+
+** TODO [New] Implement a virtio-net driver (stretch goal)
+- QEMU virt provides virtio-net. Implement the driver and a minimal
+  network stack (ARP, IP, UDP).
+- Study: virtio-net spec, TAP/TUN networking in QEMU.
+
+** TODO [New] Implement an RTC (Real-Time Clock) driver
+- Read the real-time clock from the Goldfish RTC or QEMU virt RTC.
+- Provide a =gettimeofday= syscall backed by the RTC.
+
+* Phase 5 — Virtual Memory Enhancements
+:PROPERTIES:
+:CATEGORY: memory
+:END:
+
+** TODO [New] Implement demand paging
+- Do not allocate physical frames at =mmap= / process creation time.
+- Instead, mark PTEs as invalid and allocate frames on page fault.
+- Requires: handling =LoadPageFault= and =StorePageFault= in
+  =trap_from_user()= as recoverable faults (not just killing the process).
+- Study: Linux demand paging, page fault handler fast path vs. slow path.
+
+** TODO [New] Implement copy-on-write (COW) for =fork()=
+- On =fork()=, share physical frames between parent and child with
+  read-only PTEs. On write fault, copy the frame and remap as writable.
+- Requires: per-frame reference counting, write-fault handling.
+- Study: Linux COW, =struct page= reference counting, the write-protect
+  fault path.
+
+** TODO [New] Implement =brk= / =sbrk= syscall (heap growth)
+- Allow user processes to grow their heap dynamically.
+- Track the program break in the PCB; extend the data segment on request.
+- Study: how the C library =malloc= uses =brk= and =mmap=.
+
+** TODO [New] Implement =munmap= syscall
+- Allow user processes to release mapped memory regions.
+- Properly release frames and update the page table.
+
+** TODO [New] Implement swap / page eviction (stretch goal)
+- When physical memory is exhausted, evict pages to a swap partition.
+- Implement a page replacement policy (LRU, clock algorithm).
+- Study: Linux swap, =kswapd=, the clock/CLOCK-Pro algorithm.
+
+** TODO [Enhancement] Implement a slab allocator for the kernel heap
+- The buddy allocator has high internal fragmentation for small objects.
+- Implement a slab/pool allocator on top of the buddy system for common
+  small fixed-size allocations (e.g., PCBs, page table entries, inodes).
+- The code already has a TODO about this ("buffer pool strategy").
+- Study: Bonwick's slab allocator paper, Linux SLUB.
+
+** TODO [Enhancement] Implement =TempPage= properly
+- =temp_page.rs= is a stub. Implement temporary kernel mappings for
+  operations that need to access physical memory not in the current address
+  space (e.g., copying data during =fork()=).
+
+* Phase 6 — Scheduling & Concurrency
+:PROPERTIES:
+:CATEGORY: scheduling
+:END:
+
+** TODO [Enhancement] Implement a priority-based scheduler
+- Replace round-robin with a multi-level feedback queue (MLFQ) or a simple
+  priority scheduler.
+- Study: Linux CFS (Completely Fair Scheduler), the MLFQ algorithm from
+  OSTEP, O(1) scheduler history.
+
+** TODO [New] Implement kernel threads (kthreads)
+- Allow the kernel to spawn threads for background work (e.g., a worker
+  thread for block I/O completion).
+- Kernel threads share the kernel address space but have their own stacks
+  and switch contexts.
+
+** TODO [New] Implement user-level threads / =clone()= (stretch goal)
+- Support threads within a user process: shared address space, separate
+  stacks, separate register contexts.
+- This generalizes =fork()= via a =clone()=-like interface.
+- Study: Linux =clone()= flags (=CLONE_VM=, =CLONE_FILES=, etc.), NPTL.
+
+** TODO [New] Implement real synchronization primitives
+- Replace =UPSafeCell= (uniprocessor-only) with proper synchronization:
+  - Spinlock (with interrupt disable)
+  - Mutex (blocking, with a wait queue)
+  - Semaphore (counting)
+  - Condition variable
+- Study: how spinlocks work on RISC-V (=amoswap=, =lr=/=sc=), ticket locks,
+  MCS locks. When to disable interrupts.
+
+** TODO [New] Implement =sleep()= / =nanosleep()= syscall
+- Block a process for a specified duration.
+- Implement a timer queue (sorted list or heap of wakeup times).
+- Replace the busy-wait loop in =10sleep.rs= with a proper blocking sleep.
+
+** TODO [New] Implement a wait queue abstraction
+- Processes that block on I/O, mutexes, or pipes need to be put on a wait
+  queue and woken up when the event occurs.
+- This is a fundamental kernel primitive underlying most blocking operations.
+
+* Phase 7 — Multi-Core (SMP) Support
+:PROPERTIES:
+:CATEGORY: smp
+:END:
+
+** TODO [New] Boot secondary harts
+- Currently only hart 0 runs; others enter =wfi= and never wake.
+- Implement: per-hart initialization, per-hart kernel stacks, hart startup
+  via SBI =HSM= (Hart State Management) extension.
+- Study: SBI HSM extension, per-CPU data structures.
+
+** TODO [Enhancement] Replace =UPSafeCell= with SMP-safe primitives
+- =UPSafeCell= uses =RefCell= and is not safe on multiple cores.
+- After implementing spinlocks (Phase 6), replace all =UPSafeCell= uses
+  with spinlock-protected cells.
+- Study: Linux's =spin_lock_irqsave=, per-CPU variables.
+
+** TODO [New] Implement per-hart scheduling
+- Each hart runs its own scheduler instance.
+- Implement load balancing: migrate processes between harts.
+- Study: Linux per-CPU runqueues, work stealing, cache affinity.
+
+** TODO [New] Implement inter-processor interrupts (IPI)
+- Use SBI =sbi_send_ipi()= or CLINT for inter-hart communication.
+- Needed for: TLB shootdown, scheduler wakeup, cross-hart signaling.
+- Study: RISC-V CLINT, software interrupts (=sip.SSIP=).
+
+** TODO [New] Implement TLB shootdown protocol
+- When one hart modifies a shared page table, other harts must flush their
+  TLBs for the affected addresses.
+- Use IPIs + =sfence.vma= with ASID/address arguments.
+
+* Phase 8 — User-Space Infrastructure
+:PROPERTIES:
+:CATEGORY: userspace
+:END:
+
+** TODO [New] Implement a minimal shell
+- A user-space program that reads commands, forks, execs, and waits.
+- Requires: =fork=, =exec=, =waitpid=, =read= from stdin, a filesystem
+  (or at least the ability to look up embedded apps by name).
+- Support: running programs, basic piping (=|=), I/O redirection (=>=, =<=).
+
+** TODO [New] Implement dynamic ELF loading from filesystem
+- Currently all apps are embedded in the kernel image via =link_app.s=.
+- Load programs from the filesystem at =exec()= time instead.
+- This decouples user programs from the kernel build.
+
+** TODO [New] Implement a user-space memory allocator
+- Provide =malloc= / =free= in the user library, backed by =brk= or =mmap=.
+- Study: dlmalloc, simple bump allocator, segregated free lists.
+
+** TODO [New] Write more test programs
+- Test programs for each new syscall and feature.
+- A =cat= program (read from file, write to stdout).
+- A =ls= program (list directory contents).
+- A producer-consumer test (using pipes).
+- A multi-process test (fork bomb, controlled).
+- A memory stress test (allocate until OOM).
+
+** TODO [New] Implement process exit code reporting
+- When all processes finish, print a summary of exit codes (pass/fail).
+- Useful for automated testing of the kernel.
+
+* Phase 9 — Debugging, Profiling & Observability
+:PROPERTIES:
+:CATEGORY: debug
+:END:
+
+** TODO [Enhancement] Improve kernel panic diagnostics
+- The current stack trace walker uses raw frame pointer arithmetic with no
+  bounds checking.
+- Add symbol resolution (use the kernel ELF's symbol table at runtime, or a
+  compile-time-generated symbol map).
+- Study: how debuggers resolve addresses to function names. =.symtab= and
+  =.debug_info= sections.
+
+** TODO [New] Implement kernel statistics / =sysinfo= syscall
+- Report: number of processes, free physical frames, heap usage, uptime.
+- Useful for understanding system state from user space.
+
+** TODO [New] Implement basic kernel profiling
+- Count: context switches, syscalls, page faults, timer interrupts.
+- Expose via a syscall or a /proc-like interface.
+- Study: Linux =/proc/stat=, perf counters on RISC-V (=mcycle=, =minstret=
+  via CSRs, if accessible in S-mode).
+
+** TODO [Enhancement] Add QEMU integration tests
+- Write a test harness that boots the kernel in QEMU, captures serial
+  output, and checks for expected strings.
+- Useful for CI and regression testing.
+- Study: how rCore and xv6 run automated tests.
+
+** TODO [New] Implement GDB stub or improve LLDB integration
+- Document the QEMU + LLDB debugging workflow.
+- Consider implementing a minimal GDB RSP (Remote Serial Protocol) stub
+  in the kernel for debugging without QEMU's built-in GDB server.
+
+* Phase 10 — Advanced Topics (Deep Dives)
+:PROPERTIES:
+:CATEGORY: advanced
+:END:
+
+These are ambitious topics for deeper OS exploration. Each is a significant
+project on its own.
+
+** TODO [New] Implement RISC-V =N= extension user-mode interrupts (study)
+- Explore the (draft) N extension for handling interrupts in user mode.
+- Study: delegation of interrupts to U-mode, use cases (user-level
+  networking, signal delivery).
+
+** TODO [New] Implement ASID (Address Space Identifier) support
+- Currently =sfence.vma= flushes the entire TLB on every context switch.
+- Assign ASIDs to processes to avoid full TLB flushes.
+- Study: RISC-V ASID field in SATP, ASID allocation/recycling, generation
+  numbers.
+
+** TODO [New] Implement huge page support (2 MiB / 1 GiB pages)
+- RISC-V Sv39/Sv48 supports superpage mappings at each level.
+- Map the kernel's linear region with 2 MiB or 1 GiB pages to reduce TLB
+  pressure.
+- Study: superpage PTEs, alignment requirements, transparent huge pages in
+  Linux.
+
+** TODO [New] Implement kernel module / loadable driver support
+- Load kernel modules from the filesystem at runtime.
+- Requires: ELF relocation, symbol resolution, a module API.
+- Study: Linux kernel modules, =insmod= / =rmmod=, how relocations work.
+
+** TODO [New] Explore RISC-V hypervisor extension (H-extension)
+- Study the H-extension for hardware-assisted virtualization.
+- Implement a minimal hypervisor that can run a guest kernel.
+- Study: VS-mode, HS-mode, two-stage address translation (=hgatp=),
+  =hfence= instructions.
+
+** TODO [New] Implement a network stack (TCP/IP)
+- With a virtio-net driver, implement: Ethernet framing, ARP, IPv4, ICMP
+  (ping), UDP, TCP.
+- Study: the BSD socket API, how Linux's network stack is layered, smoltcp
+  (a Rust TCP/IP library for embedded).
+
+** TODO [New] Implement a graphics framebuffer driver (stretch goal)
+- QEMU virt can be configured with a virtio-gpu device.
+- Implement a framebuffer: set up the display, write pixels, render text.
+- Study: virtio-gpu spec, double buffering, font rendering.
+
+* Reading List & References
+
+The following resources complement the hands-on work above.
+
+** Books
+- /Operating Systems: Three Easy Pieces/ (OSTEP) — Arpaci-Dusseau
+  - Free online: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  - Covers: virtualization, concurrency, persistence
+- /The RISC-V Reader/ — Patterson & Waterman
+  - Compact architecture reference
+- /xv6: a simple Unix-like teaching operating system/ (RISC-V version)
+  - Source + commentary: https://github.com/mit-pdos/xv6-riscv
+- /Linux Kernel Development/ (3rd ed.) — Robert Love
+  - Practical guide to Linux internals
+
+** Specifications
+- RISC-V Privileged Specification (ratified)
+  - https://riscv.org/technical/specifications/
+- RISC-V SBI Specification
+  - https://github.com/riscv-non-isa/riscv-sbi-doc
+- Virtio Specification (v1.2+)
+  - https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html
+
+** Related Projects
+- rCore-OS Tutorial (this project's spiritual ancestor)
+  - https://rcore-os.cn/rCore-Tutorial-Book-v3/
+- xv6-riscv (MIT's teaching OS)
+  - https://github.com/mit-pdos/xv6-riscv
+- Maturin OS (Rust RISC-V OS with SMP)
+  - https://github.com/scPointer/maturin
+- Redox OS (Rust microkernel)
+  - https://www.redox-os.org/
+
+* Progress Log
+
+Use this section to record milestones as you complete them.
+
+| Date | Item | Notes |
+|------+------+-------|
+|      |      |       |

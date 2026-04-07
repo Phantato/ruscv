@@ -19,8 +19,10 @@ OBJDUMP_BINARY = llvm-objdump
 NM_BINARY      = llvm-nm
 READELF_BINARY = llvm-readelf
 
-RUSTSBI_BIN       = rustsbi/rustsbi-qemu
-QEMU_CMD    = qemu-system-riscv64 -M virt -s -S --nographic \
+# RUSTSBI_BIN is injected by the Nix devShell (via direnv + flake.nix).
+# Fall back to the legacy path only when running outside the devShell.
+RUSTSBI_BIN       ?= rustsbi/rustsbi-qemu
+QEMU_CMD    = qemu-system-riscv64 -M virt --nographic \
 	-cpu rv64 -smp 1 -net none 								\
 	-bios ${RUSTSBI_BIN} 									\
 	-serial telnet::1235,server
@@ -46,6 +48,10 @@ clean:
 qemu: $(KERNEL_BIN)
 	$(call color_header, "Launching QEMU")
 	$(QEMU_CMD) $(QEMU_LOADER)
+
+qemu-debug: $(KERNEL_BIN)
+	$(call color_header, "Launching QEMU Debugging")
+	$(QEMU_CMD) $(QEMU_LOADER) -s -S
 
 ##------------------------------------------------------------------------------
 ## Attach lldb debugger
@@ -87,3 +93,4 @@ nm: $(KERNEL_ELF)
 dtb:
 	qemu-system-riscv64 -M virt,dumpdtb=dump.dtb
 	dtc -o dump.dts dump.dtb
+
