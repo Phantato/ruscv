@@ -19,22 +19,31 @@ code; features marked /New/ introduce entirely new subsystems.
 :CATEGORY: foundations
 :END:
 
-** TODO [Enhancement] Fix physical frame leak on =unmap()=
+** IN-PROGRESS [Enhancement] Fix physical frame leak on =unmap()=
 - =page_table.rs:unmap()= clears the PTE but never releases the physical
   frame. This is a memory leak marked FIXME in the code.
+- Well this is not a memory leak but a waste of resources. A fix would be
+  walkthrough page tables and drop pages having no valid PTEs upwards.
 - When unmapping a =Framed= segment, the =PageFrame= should be dropped
   (returned to the frame allocator).
 - Study: how does Linux handle PTE teardown and frame release? What about
   reference counting for shared pages?
+- Shared Memory & Frame Sharing (Intro)
+- Shared pages: multiple page tables or multiple virtual addresses can map the same physical frame; the kernel must separate "frame ownership" from "PTE presence".
+- Reference counting: track a per-physical-page reference (atomic refcount or central page-cache entry). On a shared map, increment the refcount and create PTEs that point to the same physical page (set permissions appropriately). On unmap, decrement the refcount and only return the physical frame to the allocator when the count reaches zero.
+- Copy-on-write (COW): for private mappings, map the same physical page read-only in each page table and on a write fault allocate a new frame, copy contents, and update only the faulting PTE while decrementing the original frame's refcount.
+- Page-cache / file-backed mappings: typically use a central page-cache entry (one physical page, many PTEs). The kernel's metadata (e.g., Linux's `struct page`) holds the refcount and other metadata.
+- SMP considerations: use atomic refcounts and perform TLB shootdown (IPI + `sfence.vma`) when you change mappings so other harts don't hold stale translations.
+- Don't confuse page-table pages (internal PTE pages) with data frames — they have different owners and lifetimes and must be managed separately.
 
-** TODO [Enhancement] Fix =MEMORY_END= inconsistency
+** DONE [Enhancement] Fix =MEMORY_END= inconsistency
 - =memory/mod.rs= defines =MEMORY_END = 0x8080_0000= (8 MiB), while
   =boards/qemu.rs= defines =MEMORY_END = 0x8800_0000= (128 MiB).
 - The frame allocator uses the =mod.rs= value, limiting usable RAM to ~8 MiB.
 - Unify to use the board-level constant and verify the frame allocator
   handles the larger range correctly.
 
-** TODO [Enhancement] Validate user pointers in syscalls
+** DONE [Enhancement] Validate user pointers in syscalls
 - [[file:page_permission_fix.md][analysis]]
 - =sys_write= and =sys_get_time= translate user VAs to PAs without checking
   permissions (TODOs in code).
@@ -43,7 +52,7 @@ code; features marked /New/ introduce entirely new subsystems.
 - Study: how does Linux =copy_from_user= / =copy_to_user= work? What about
   SMAP/SMEP equivalents on RISC-V (SUM bit in =sstatus=)?
 
-** TODO [Enhancement] Reclaim exited process resources
+** IN-PROGRESS [Enhancement] Reclaim exited process resources
 - Exited processes remain in the =VecDeque= forever; their =MemorySet= and
   kernel stack are never freed.
 - Implement proper cleanup: release user address space, unmap kernel stack,
