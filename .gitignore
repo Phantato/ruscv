@@ -5,3 +5,4 @@ dump.dtb
 dump.dts
 /.direnv/
 *~
+/target_test/

@@ -3,9 +3,7 @@ mod process;
 
 use self::{fs::sys_write, process::*};
 use crate::{
-    fmt_str,
-    process::get_current_process,
-    timer::{get_time_us, MICRO_PER_SEC},
+    fmt_str, memory::PTEFlags, process::get_current_process, timer::{MICRO_PER_SEC, get_time_us}
 };
 
 pub const MAX_MSG_LEN: usize = 32;
@@ -37,7 +35,7 @@ pub fn syscall(
 }
 fn sys_get_time(va: usize, _tz: usize) -> Result<isize, ()> {
     let task = get_current_process();
-    let pa = task.translate(va.into()).ok_or(())?;
+    let pa = task.translate(va.into(), PTEFlags::W)?;
     // TODO: this is not safe, because we haven't check the permission.
     let ts = pa.0 as *mut TimeVal;
     let t = get_time_us();

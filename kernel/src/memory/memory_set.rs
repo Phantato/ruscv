@@ -293,8 +293,16 @@ impl MemorySet {
         self.page_table.token()
     }
 
-    pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
+    fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
         self.page_table.translate(va)
+    }
+
+    pub fn translate_user(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
+        self.page_table.translate_user(va, expect)
+    }
+
+    pub fn trap_ctx(&self) -> Option<PhysAddr> {
+        self.translate(VirtAddr::from(TRAP_CONTEXT))
     }
 
     fn map_trampoline(&mut self, trampoline_ppn: PhysPageNum) {

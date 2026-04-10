@@ -111,7 +111,7 @@ impl From<usize> for VirtPageNum {
 }
 
 impl Step for VirtPageNum {
-    fn steps_between(start: &Self, end: &Self) -> Option<usize> {
+    fn steps_between(start: &Self, end: &Self) -> (usize, Option<usize>) {
         usize::steps_between(&start.0, &end.0)
     }
 
@@ -125,7 +125,7 @@ impl Step for VirtPageNum {
 }
 
 impl Step for PhysPageNum {
-    fn steps_between(start: &Self, end: &Self) -> Option<usize> {
+    fn steps_between(start: &Self, end: &Self) -> (usize, Option<usize>) {
         usize::steps_between(&start.0, &end.0)
     }
 

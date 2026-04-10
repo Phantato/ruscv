@@ -41,6 +41,9 @@ impl PageTableEntry {
     pub fn flags(&self) -> PTEFlags {
         PTEFlags::from_bits(self.bits as u8).unwrap()
     }
+    pub fn contains_all(flag: PTEFlags) -> impl FnOnce(&&mut Self) -> bool {
+        move |pte| (pte.flags() & flag) == flag
+    }
     pub fn is_valid(&self) -> bool {
         (self.flags() & PTEFlags::V) != PTEFlags::empty()
     }
@@ -91,6 +94,14 @@ impl PageTable {
         self.get_pte(va.floor())
             .map(|pte| PhysAddr::from(pte.ppn()) + va.offset())
     }
+    pub fn translate_user(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
+        self.get_pte(va.floor())
+            .filter(PageTableEntry::contains_all(
+                expect | PTEFlags::V | PTEFlags::U,
+            ))
+            .map(|pte| PhysAddr::from(pte.ppn()) + va.offset())
+            .ok_or(())
+    }
     pub fn get_pte_create(&mut self, vpn: VirtPageNum) -> &mut PageTableEntry {
         let idxs = vpn.indexes();
         let mut parent_frame = self.root_frame.get_pte_array_mut().unwrap();
@@ -122,15 +133,5 @@ impl PageTable {
             parent_frame = unsafe { PhysAddr::from(pte.ppn()).get_mut().unwrap() }
         }
         Some(&mut parent_frame[idxs[3]])
-    }
-}
-
-impl From<PhysPageNum> for PageTable {
-    fn from(ppn: PhysPageNum) -> Self {
-        let root_frame = PageFrame { ppn };
-        Self {
-            root_frame,
-            frames: None,
-        }
     }
 }

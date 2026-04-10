@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use crate::{
-    memory::VirtAddr,
+    memory::{PTEFlags, VirtAddr},
     print,
     process::{get_current_process, ProcessControlBlock},
 };
@@ -31,7 +31,7 @@ fn get_strs(
     let mut ret = vec![];
     while len > 0 {
         // TODO: this is not safe, because we haven't check the permission.
-        if let Some(pa) = task.translate(buf.into()) {
+        if let Ok(pa) = task.translate(buf.into(), PTEFlags::R) {
             let diff = (VirtAddr::from(VirtAddr::from(buf + 1).ceil()).0 - buf).clamp(0, len);
             assert!(diff > 0);
             // linearly map physical space rather identical map.

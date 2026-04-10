@@ -1,5 +1,6 @@
 mod status;
 use self::status::ProcessStatus;
+use crate::memory::PTEFlags;
 use crate::memory::{kernel_stack_position, memory_set::SegmentPermission, KERNEL_SPACE};
 use crate::timer::set_next_trigger;
 use crate::{
@@ -161,16 +162,15 @@ impl ProcessControlBlock {
             inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::from_elf(elf, task_id)) },
         }
     }
-    pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
-        self.inner.get().mem_set.translate(va)
+    pub fn translate(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
+        self.inner.get().mem_set.translate_user(va, expect)
     }
 }
 
 impl ProcessControlBlockInner {
     fn from_elf(elf: &[u8], task_id: usize) -> Self {
         let (mem_set, sp, entry) = MemorySet::from_elf(elf);
-        let trap_ctx_addr = mem_set
-            .translate(VirtAddr::from(TRAP_CONTEXT))
+        let trap_ctx_addr = mem_set.trap_ctx()
             .expect("TRAP_CONTEXT should be mapped");
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(task_id);
         {

@@ -7,7 +7,7 @@ use crate::sync::UPSafeCell;
 use alloc::sync::Arc;
 use memory_set::MemorySet;
 
-pub use self::{address::VirtAddr, page_table::PageTable};
+pub use self::{address::VirtAddr, page_table::PTEFlags};
 
 const PA_WIDTH: usize = 56;
 const VA_WIDTH: usize = 48;
