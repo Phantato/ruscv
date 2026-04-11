@@ -1,7 +1,6 @@
 use super::{
     address::{PhysAddr, PhysPageNum},
-    page_table::PageTableEntry,
-    MEMORY_END, PAGE_SIZE, PTE_PER_PAGE,
+    MEMORY_END, PAGE_SIZE,
 };
 use crate::{
     info,
@@ -16,9 +15,6 @@ pub struct PageFrame {
 }
 
 impl PageFrame {
-    pub fn get_pte_array_mut(&self) -> Option<&mut [PageTableEntry; PTE_PER_PAGE]> {
-        unsafe { PhysAddr::from(self.ppn).get_mut() }
-    }
     pub fn get_bytes_array_mut(&self) -> &mut [u8; PAGE_SIZE] {
         unsafe { PhysAddr::from(self.ppn).get_mut().unwrap() }
     }

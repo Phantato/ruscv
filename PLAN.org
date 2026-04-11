@@ -19,7 +19,7 @@ code; features marked /New/ introduce entirely new subsystems.
 :CATEGORY: foundations
 :END:
 
-** IN-PROGRESS [Enhancement] Fix physical frame leak on =unmap()=
+** DONE [Enhancement] Fix physical frame leak on =unmap()=
 - =page_table.rs:unmap()= clears the PTE but never releases the physical
   frame. This is a memory leak marked FIXME in the code.
 - Well this is not a memory leak but a waste of resources. A fix would be
@@ -36,7 +36,7 @@ code; features marked /New/ introduce entirely new subsystems.
 - SMP considerations: use atomic refcounts and perform TLB shootdown (IPI + `sfence.vma`) when you change mappings so other harts don't hold stale translations.
 - Don't confuse page-table pages (internal PTE pages) with data frames — they have different owners and lifetimes and must be managed separately.
 
-** DONE [Enhancement] Fix =MEMORY_END= inconsistency
+** CANCELLED [Enhancement] Fix =MEMORY_END= inconsistency
 - =memory/mod.rs= defines =MEMORY_END = 0x8080_0000= (8 MiB), while
   =boards/qemu.rs= defines =MEMORY_END = 0x8800_0000= (128 MiB).
 - The frame allocator uses the =mod.rs= value, limiting usable RAM to ~8 MiB.
@@ -59,7 +59,7 @@ code; features marked /New/ introduce entirely new subsystems.
   remove PCB from the process list.
 - This lays groundwork for dynamic process creation.
 
-** TODO [Enhancement] Increase boot and kernel stack sizes
+** CANCELLED [Enhancement] Increase boot and kernel stack sizes
 - Boot stack is 1 page (4 KiB). Kernel per-process stack is also 4 KiB.
 - Increase boot stack to at least 16 KiB and per-process kernel stack to
   8–16 KiB to prevent stack overflow during complex trap handling.

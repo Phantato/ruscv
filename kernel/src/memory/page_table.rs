@@ -1,5 +1,7 @@
-use alloc::vec::Vec;
+use alloc::collections::btree_map::BTreeMap;
 use bitflags::*;
+
+use crate::memory::PTE_PER_PAGE;
 
 use super::{
     address::{PhysAddr, PhysPageNum, VirtPageNum},
@@ -41,7 +43,7 @@ impl PageTableEntry {
     pub fn flags(&self) -> PTEFlags {
         PTEFlags::from_bits(self.bits as u8).unwrap()
     }
-    pub fn contains_all(flag: PTEFlags) -> impl FnOnce(&&mut Self) -> bool {
+    pub fn contains_all(flag: PTEFlags) -> impl FnOnce(&&Self) -> bool {
         move |pte| (pte.flags() & flag) == flag
     }
     pub fn is_valid(&self) -> bool {
@@ -58,80 +60,129 @@ impl PageTableEntry {
     }
 }
 
+struct PageTableFrame {
+    frame: PageFrame,
+    mc: usize,
+}
+
+impl PageTableFrame {
+    fn get_pte_array_mut(&self) -> &'static mut [PageTableEntry; PTE_PER_PAGE] {
+        unsafe { PhysAddr::from(self.frame.ppn).get_mut().unwrap() }
+    }
+    fn get(&self, idx: usize) -> &'static PageTableEntry {
+        return &self.get_pte_array_mut()[idx];
+    }
+    fn map(&mut self, idx: usize, ppn: PhysPageNum, mode: PTEFlags) {
+        self.mc += 1;
+        let pte = &mut self.get_pte_array_mut()[idx];
+        assert!(!pte.is_valid(), "ppn {:?} is mapped before mapping", ppn);
+        *pte = PageTableEntry::new(ppn, mode | PTEFlags::V);
+    }
+    fn unmap(&mut self, idx: usize) -> bool {
+        self.get_pte_array_mut()[idx] = PageTableEntry::empty();
+        self.mc -= 1;
+        self.mc == 0
+    }
+}
+
+impl From<PageFrame> for PageTableFrame {
+    fn from(frame: PageFrame) -> Self {
+        Self { frame, mc: 0 }
+    }
+}
+
 pub struct PageTable {
-    pub root_frame: PageFrame,
-    frames: Option<Vec<PageFrame>>,
+    root: PhysPageNum,
+    frames: BTreeMap<PhysPageNum, PageTableFrame>,
 }
 
 impl PageTable {
     pub fn new() -> Self {
         let root_frame = frame_alloc().unwrap();
-        let frames = Some(vec![]);
-        Self { root_frame, frames }
+        let root = root_frame.ppn;
+        let mut frames = BTreeMap::new();
+        frames.insert(root, root_frame.into());
+        Self { root, frames }
     }
-    pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
-        let pte = self.get_pte_create(vpn);
-        assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn.0);
-        *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
+    pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, mode: PTEFlags) {
+        let idxs = vpn.indexes();
+        self.get_page_table_frame_or_create(idxs)
+            .map(idxs[3], ppn, mode)
     }
     pub fn unmap(&mut self, vpn: VirtPageNum) {
-        if let Some(pte) = self.get_pte(vpn) {
-            assert!(
-                pte.is_valid(),
-                "vpn {:?} is invalid before unmapping",
-                vpn.0
-            );
-            // FIXME: release physical frame.
-            *pte = PageTableEntry::empty();
+        let idxs = vpn.indexes();
+        self.recycle_sub(vpn, idxs, self.root, 0);
+    }
+    fn recycle_sub(
+        &mut self,
+        vpn: VirtPageNum,
+        idxs: [usize; 4],
+        ppn: PhysPageNum,
+        iidx: usize,
+    ) -> bool {
+        if iidx >= idxs.len() {
+            return true;
+        }
+        let idx = idxs[iidx];
+        let sub_pte = self.frames.get(&ppn).unwrap().get(idx);
+        assert!(
+            sub_pte.is_valid(),
+            "vpn {:?} is invalid before unmapping",
+            vpn.0
+        );
+        if self.recycle_sub(vpn, idxs, sub_pte.ppn(), iidx + 1) {
+            self.frames.remove(&sub_pte.ppn());
+            self.frames.get_mut(&ppn).unwrap().unmap(idx)
+        } else {
+            false
         }
     }
 
     pub fn token(&self) -> usize {
-        9usize << 60 | self.root_frame.ppn.0
+        9usize << 60 | self.root.0
     }
 
     pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
         self.get_pte(va.floor())
             .map(|pte| PhysAddr::from(pte.ppn()) + va.offset())
     }
-    pub fn translate_user(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
+    pub fn translate_user(&self, va: VirtAddr, mode: PTEFlags) -> Result<PhysAddr, ()> {
         self.get_pte(va.floor())
             .filter(PageTableEntry::contains_all(
-                expect | PTEFlags::V | PTEFlags::U,
+                mode | PTEFlags::V | PTEFlags::U,
             ))
             .map(|pte| PhysAddr::from(pte.ppn()) + va.offset())
             .ok_or(())
     }
-    pub fn get_pte_create(&mut self, vpn: VirtPageNum) -> &mut PageTableEntry {
-        let idxs = vpn.indexes();
-        let mut parent_frame = self.root_frame.get_pte_array_mut().unwrap();
-        // once got the 4th page table, directly returns its entry.
+    fn get_page_table_frame_or_create(&mut self, idxs: [usize; 4]) -> &mut PageTableFrame {
+        let mut parent_ppn = self.root;
         for i in 0..3 {
-            let pte = &mut parent_frame[idxs[i]];
-            if !pte.is_valid() {
+            let idx = idxs[i];
+            let current_frame = self.frames.get_mut(&parent_ppn).unwrap();
+            let pte = current_frame.get(idx);
+            parent_ppn = if pte.is_valid() {
+                pte.ppn()
+            } else {
                 let frame = frame_alloc().unwrap();
                 let ppn = frame.ppn;
-                self.frames
-                    .as_mut()
-                    .expect("create pte on temp PageTable")
-                    .push(frame);
-                *pte = PageTableEntry::new(ppn, PTEFlags::V);
-            }
-            parent_frame = unsafe { PhysAddr::from(pte.ppn()).get_mut().unwrap() }
+                current_frame.map(idxs[i], ppn, PTEFlags::V);
+                self.frames.insert(ppn, frame.into());
+                ppn
+            };
         }
-        &mut parent_frame[idxs[3]]
+        self.frames.get_mut(&parent_ppn).unwrap()
     }
-    pub fn get_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
+    pub fn get_pte(&self, vpn: VirtPageNum) -> Option<&PageTableEntry> {
         let idxs = vpn.indexes();
-        let mut parent_frame = self.root_frame.get_pte_array_mut().unwrap();
-        // once got the 4th page table, directly returns its entry.
-        for i in 0..3 {
-            let pte = &parent_frame[idxs[i]];
-            if !pte.is_valid() {
-                return None;
-            }
-            parent_frame = unsafe { PhysAddr::from(pte.ppn()).get_mut().unwrap() }
+        let (mut pte, mut ppn) = (None, self.root);
+        for idx in idxs {
+            pte = self
+                .frames
+                .get(&ppn)
+                .map(|frame| frame.get(idx))
+                .filter(|pte| pte.is_valid());
+            ppn = pte?.ppn();
         }
-        Some(&mut parent_frame[idxs[3]])
+        pte
     }
 }
