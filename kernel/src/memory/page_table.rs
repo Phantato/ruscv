@@ -144,6 +144,7 @@ impl PageTable {
 
     pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
         self.get_pte(va.floor())
+            .filter(|pte| pte.is_valid())
             .map(|pte| PhysAddr::from(pte.ppn()) + va.offset())
     }
     pub fn translate_user(&self, va: VirtAddr, mode: PTEFlags) -> Result<PhysAddr, ()> {

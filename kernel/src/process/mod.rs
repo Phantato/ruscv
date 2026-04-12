@@ -52,7 +52,7 @@ impl ProcessManager {
         extern "C" {
             fn _num_app();
         }
-        let num_ptr = _num_app as usize as *const usize;
+        let num_ptr = _num_app as *const usize;
         let num = num_ptr.read_volatile();
         trace!("task num: {}", num);
         let mut load = VecDeque::new();
@@ -66,7 +66,6 @@ impl ProcessManager {
                         app_start[i] as *const u8,
                         app_start[i + 1] - app_start[i],
                     ),
-                    i,
                 )
                 .into(),
             )
@@ -156,10 +155,10 @@ impl ProcessControlBlock {
     fn satp(&self) -> usize {
         self.inner.get().mem_set.token()
     }
-    fn from_elf(pid: usize, elf: &[u8], task_id: usize) -> Self {
+    fn from_elf(pid: usize, elf: &[u8]) -> Self {
         Self {
             pid,
-            inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::from_elf(elf, task_id)) },
+            inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::from_elf(elf, pid)) },
         }
     }
     pub fn translate(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
@@ -170,8 +169,7 @@ impl ProcessControlBlock {
 impl ProcessControlBlockInner {
     fn from_elf(elf: &[u8], task_id: usize) -> Self {
         let (mem_set, sp, entry) = MemorySet::from_elf(elf);
-        let trap_ctx_addr = mem_set.trap_ctx()
-            .expect("TRAP_CONTEXT should be mapped");
+        let trap_ctx_addr = mem_set.trap_ctx().expect("TRAP_CONTEXT should be mapped");
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(task_id);
         {
             KERNEL_SPACE.get_mut().push_empty_seg(

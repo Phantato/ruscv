@@ -231,24 +231,25 @@ impl MemorySet {
             Segment::new(
                 (sbss as usize).into(),
                 (ebss as usize).into(),
-                SegmentType::Framed,
+                SegmentType::Linear(0),
                 SegmentPermission::R | SegmentPermission::W,
             ),
-            Some(unsafe {
-                slice::from_raw_parts(sbss as *const u8, ebss as usize - sbss as usize)
-            }),
+            None,
+        );
+        trace!(
+            "kernel stack: [{:x}, {:x})",
+            bstack as usize, tstack as usize
         );
         kernel.push(
             Segment::new(
                 (bstack as usize).into(),
                 (tstack as usize).into(),
-                SegmentType::Framed,
+                SegmentType::Linear(0),
                 SegmentPermission::R | SegmentPermission::W,
             ),
-            Some(unsafe {
-                slice::from_raw_parts(bstack as *const u8, tstack as usize - bstack as usize)
-            }),
+            None,
         );
+        trace!("kernel heap: [{:x}, {:x})", ekernel as usize, MEMORY_END);
         kernel.push(
             Segment::new(
                 (ekernel as usize).into(),

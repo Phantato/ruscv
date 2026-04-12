@@ -3,5 +3,6 @@ pub enum ProcessStatus {
     Pending, // 等待条件
     Ready,   // 准备运行
     Running, // 正在运行
+    ZOMBIE,  // 僵尸状态
     Exited,  // 已退出
 }

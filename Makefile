@@ -22,10 +22,12 @@ READELF_BINARY = llvm-readelf
 # RUSTSBI_BIN is injected by the Nix devShell (via direnv + flake.nix).
 # Fall back to the legacy path only when running outside the devShell.
 RUSTSBI_BIN       ?= rustsbi/rustsbi-qemu
+
+QEMU_SERIAL_PORT = 1235
 QEMU_CMD    = qemu-system-riscv64 -M virt --nographic \
 	-cpu rv64 -smp 1 -net none 								\
 	-bios ${RUSTSBI_BIN} 									\
-	-serial telnet::1235,server
+	-serial telnet::${QEMU_SERIAL_PORT},server
 QEMU_LOADER = -device loader,file=${KERNEL_BIN},addr=0x80200000
 
 
@@ -54,9 +56,15 @@ qemu-debug: $(KERNEL_BIN)
 	$(QEMU_CMD) $(QEMU_LOADER) -s -S
 
 ##------------------------------------------------------------------------------
+## Run the kernel in QEMU
+##------------------------------------------------------------------------------
+serial:
+	nc localhost $(QEMU_SERIAL_PORT)
+
+##------------------------------------------------------------------------------
 ## Attach lldb debugger
 ##------------------------------------------------------------------------------
-lldb: qemu
+lldb: qemu-debug
 	$(call color_header, "Launching LLDB")
 	lldb -o "gdb-remote 1234" ${KERNEL_ELF} 
 

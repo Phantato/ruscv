@@ -3,10 +3,7 @@ use super::{
     MEMORY_END, PAGE_SIZE,
 };
 use crate::{
-    info,
-    kernel_address::{ekernel, skernel},
-    sync::UPSafeCell,
-    trace,
+    kernel_address::{ekernel, skernel}, sync::UPSafeCell, info, trace
 };
 use alloc::vec::Vec;
 
@@ -28,6 +25,7 @@ impl PageFrame {
 
 impl Drop for PageFrame {
     fn drop(&mut self) {
+        trace!("recycling ppn: {:?}", self.ppn);
         FRAME_ALLOCATOR.get_mut().dealloc(self.ppn)
     }
 }
