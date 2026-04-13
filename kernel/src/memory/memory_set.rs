@@ -329,6 +329,7 @@ impl MemorySet {
         self.segments.push(segment);
     }
 
+    #[inline(always)]
     fn activate(&self) {
         let satp = self.token();
         unsafe {

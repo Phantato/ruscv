@@ -1,5 +1,7 @@
 //! SBI call wrappers
 
+use crate::println;
+
 /// use sbi call to putchar in console (qemu uart handler)
 pub fn console_putchar(c: usize) {
     #[allow(deprecated)]
@@ -14,6 +16,7 @@ pub fn set_timer(timer: usize) {
 /// use sbi call to shutdown the kernel
 pub fn shutdown(failure: bool) -> ! {
     use sbi_rt::{system_reset, NoReason, Shutdown, SystemFailure};
+    println!("[kernel] shutdown with failure: {}", failure);
     if !failure {
         system_reset(Shutdown, NoReason);
     } else {

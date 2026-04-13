@@ -44,7 +44,6 @@ $(LAST_BUILD_CONFIG):
 $(KERNEL_ELF): $(KERNEL_ELF_DEPS)
 	$(call color_header, "Compiling kernel ELF")
 	@RUSTFLAGS="$(COMPILER_ARGS) ${KERNEL_LINK_SCRIPT}" $(RUSTC_CMD) ${KERNEL_COMPILE_ARGS}
-		
 
 ##------------------------------------------------------------------------------
 ## Generate the stripped kernel binary

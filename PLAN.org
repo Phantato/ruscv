@@ -251,6 +251,10 @@ code; features marked /New/ introduce entirely new subsystems.
   operations that need to access physical memory not in the current address
   space (e.g., copying data during =fork()=).
 
+** TODO [Enhancement] Implement full KASLR correctly.
+
+add a simple bootloader and load the curnal to randomized location, then use trap to switch into kernel.
+
 * Phase 6 — Scheduling & Concurrency
 :PROPERTIES:
 :CATEGORY: scheduling

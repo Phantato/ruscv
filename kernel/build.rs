@@ -13,11 +13,14 @@ fn insert_app_data() -> Result<(), Error> {
     let mut f = File::create("src/link_app.s").unwrap();
     let mut apps: Vec<_> = read_dir("../user/src/bin")
         .unwrap()
-        .into_iter()
-        .map(|dir_entry| {
-            let mut name_with_ext = dir_entry.unwrap().file_name().into_string().unwrap();
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter_map(|mut name_with_ext| {
+            if name_with_ext.ends_with("~") {
+                return None;
+            }
             name_with_ext.drain(name_with_ext.find('.').unwrap()..name_with_ext.len());
-            name_with_ext
+            Some(name_with_ext)
         })
         .collect();
     apps.sort();
@@ -43,10 +46,20 @@ _num_app:
         apps.len() - 1
     )?;
 
-    for (_, app) in apps.iter().enumerate() {
-        let str = app.split_at(2);
-        writeln!(f, r#"    .string "{}""#, str.1)?
+    writeln!(
+        f,
+        r#"
+.global _app_names
+_app_names:"#
+    )?;
+    for app in apps.iter() {
+        let mut app_name = app.to_owned();
+        while app_name.starts_with(|c|c >= '0' && c <= '9') {
+            app_name.remove(0);
+        }
+        writeln!(f, r#"    .string "{}""#, app_name)?;
     }
+
     writeln!(
         f,
         r#"

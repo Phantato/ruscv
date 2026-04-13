@@ -1,16 +1,16 @@
+mod process_control_block;
 mod status;
 use self::status::ProcessStatus;
-use crate::memory::PTEFlags;
-use crate::memory::{kernel_stack_position, memory_set::SegmentPermission, KERNEL_SPACE};
 use crate::timer::set_next_trigger;
 use crate::{
     error,
-    memory::{address::PhysAddr, memory_set::MemorySet, VirtAddr, TRAMPOLINE, TRAP_CONTEXT},
+    memory::{TRAMPOLINE, TRAP_CONTEXT},
     sbi::shutdown,
     sync::UPSafeCell,
     syscall::{syscall, MAX_MSG_LEN},
     trace,
 };
+use alloc::vec::Vec;
 use alloc::{collections::VecDeque, sync::Arc};
 use core::arch::{asm, global_asm};
 use riscv::register::scause::Interrupt;
@@ -21,6 +21,8 @@ use riscv::register::{
     stval, stvec,
     utvec::TrapMode,
 };
+
+pub use crate::process::process_control_block::ProcessControlBlock;
 
 global_asm!(include_str!("switch.s"));
 extern "C" {
@@ -38,8 +40,59 @@ lazy_static::lazy_static! {
     };
 }
 
+// TODO: remove this and use a real fs
+lazy_static::lazy_static! {
+    static ref APP_NAMES: Vec<&'static str> = {
+        let num_app = get_num_app();
+        extern "C" { fn _app_names();}
+        let mut start = _app_names as *const u8;
+        let mut v = vec![];
+        unsafe {
+            for _ in 0..num_app {
+                let mut end = start;
+                while end.read_volatile() != '\0' as u8 {
+                    end = end.add(1);
+                }
+                let slice = core::slice::from_raw_parts(start, end as usize - start as usize);
+                let s = core::str::from_utf8(slice).unwrap();
+                v.push(s);
+                start = end.add(1);
+            }
+        }
+        v
+    };
+    static ref APP_BINS: Vec<&'static [u8]> = {
+        let num_apps = get_num_app();
+                extern "C" {
+            fn _num_app();
+        }
+        let num_ptr = _num_app as *const usize;
+        let app_start = unsafe {
+           core::slice::from_raw_parts(num_ptr.add(1), num_apps+1)
+        };
+        let mut v = vec![];
+        for i in 0..num_apps {
+            let len = app_start[i+1] - app_start[i];
+            if len >= APP_SIZE_LIMIT {
+                panic!("app {} is too large", i);
+            }
+            v.push(
+                unsafe {core::slice::from_raw_parts(app_start[i] as *const u8, len)}
+            );
+        }
+        v
+    };
+}
+
+fn app_by_name(path: &str) -> Option<&[u8]> {
+    APP_NAMES
+        .iter()
+        .zip(APP_BINS.iter())
+        .find(|(name, _)| path == **name)
+        .map(|(_, bin)| *bin)
+}
+
 struct ProcessManager {
-    num: usize,
     inner: UPSafeCell<ProcessManagerInner>,
 }
 struct ProcessManagerInner {
@@ -47,35 +100,29 @@ struct ProcessManagerInner {
     load: VecDeque<Arc<ProcessControlBlock>>,
 }
 
+fn get_num_app() -> usize {
+    extern "C" {
+        fn _num_app();
+    }
+    let num_ptr = _num_app as *const usize;
+    unsafe { num_ptr.read_volatile() }
+}
+
 impl ProcessManager {
     unsafe fn new() -> Self {
-        extern "C" {
-            fn _num_app();
-        }
-        let num_ptr = _num_app as *const usize;
-        let num = num_ptr.read_volatile();
-        trace!("task num: {}", num);
-        let mut load = VecDeque::new();
-        let app_start = unsafe { core::slice::from_raw_parts(num_ptr.add(1), num + 1) };
-        for i in 0..num {
-            trace!("load task {}", i);
-            load.push_back(
-                ProcessControlBlock::from_elf(
-                    i,
-                    core::slice::from_raw_parts(
-                        app_start[i] as *const u8,
-                        app_start[i + 1] - app_start[i],
-                    ),
-                )
-                .into(),
-            )
-        }
+        let mut load = APP_BINS
+            .iter()
+            .map(|elf| Arc::new(ProcessControlBlock::from_elf(*elf)))
+            .collect::<VecDeque<_>>();
+        // FIXME: remove initproc & user_shell for now
+        load.pop_back();
+        load.pop_back();
+        trace!("bin num: {}", load.len());
         let inner = UPSafeCell::new(ProcessManagerInner {
-            current: num - 1,
+            current: load.len() - 1,
             load,
         });
-        trace!("all task loaded");
-        Self { num, inner }
+        Self { inner }
     }
 
     fn start(&self) -> ! {
@@ -93,7 +140,7 @@ impl ProcessManager {
                 };
                 {
                     let mut inner = self.inner.get_mut();
-                    inner.current = pcb.pid;
+                    inner.current = pcb.pid();
                 }
                 unsafe { __switch(current_ctx, next_ctx) }
             }
@@ -103,27 +150,26 @@ impl ProcessManager {
     fn find_next_ready_task(&self) -> Option<Arc<ProcessControlBlock>> {
         let inner = self.inner.get_mut();
         let current = inner.current;
-        (current + 1..current + self.num + 1)
-            .map(|idx| inner.load[idx % self.num].clone())
+        // FIXME: after using ready queue, this loop based finding needs to be deprecated.
+        (current..current + inner.load.len())
+            .map(|idx| inner.load[idx % inner.load.len()].clone())
             .find(|pcb| pcb.inner.get().status == ProcessStatus::Ready)
     }
     fn mark_current_ready(&self) {
         let inner = self.inner.get_mut();
-        let mut pcb_inner = inner.load[inner.current].inner.get_mut();
+        let mut pcb_inner = inner.load[inner.current - 1].inner.get_mut();
         pcb_inner.status = ProcessStatus::Ready
     }
     fn mark_current_exited(&self) {
         let inner = self.inner.get_mut();
-        let mut pcb_inner = inner.load[inner.current].inner.get_mut();
+        let mut pcb_inner = inner.load[inner.current - 1].inner.get_mut();
         pcb_inner.status = ProcessStatus::Exited
     }
     pub fn get_current_process(&self) -> Option<Arc<ProcessControlBlock>> {
-        let inner: core::cell::Ref<'_, ProcessManagerInner> = self.inner.get();
-        if inner.current == self.num {
-            None
-        } else {
-            Some(inner.load[inner.current].clone())
-        }
+        let inner = self.inner.get();
+        error!("try get pid: {}", inner.current);
+        // FIXME: this is a slot vec and the pid does not really need to be corresponding to the index
+        inner.load.get(inner.current - 1).map(|pcb| pcb.clone())
     }
     fn get_current_switch_ctx(&self) -> *mut SwitchCtx {
         let pcb = self.get_current_process().unwrap();
@@ -133,62 +179,6 @@ impl ProcessManager {
     fn get_current_satp(&self) -> usize {
         let pcb = self.get_current_process().unwrap();
         pcb.satp()
-    }
-}
-
-pub struct ProcessControlBlock {
-    pid: usize,
-    inner: UPSafeCell<ProcessControlBlockInner>,
-}
-
-struct ProcessControlBlockInner {
-    status: ProcessStatus,
-    switch_ctx: SwitchCtx,
-    trap_ctx_addr: PhysAddr,
-    mem_set: MemorySet,
-}
-
-impl ProcessControlBlock {
-    fn trap_ctx(&self) -> &'static mut TrapCtx {
-        unsafe { self.inner.get().trap_ctx_addr.get_mut().unwrap() }
-    }
-    fn satp(&self) -> usize {
-        self.inner.get().mem_set.token()
-    }
-    fn from_elf(pid: usize, elf: &[u8]) -> Self {
-        Self {
-            pid,
-            inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::from_elf(elf, pid)) },
-        }
-    }
-    pub fn translate(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
-        self.inner.get().mem_set.translate_user(va, expect)
-    }
-}
-
-impl ProcessControlBlockInner {
-    fn from_elf(elf: &[u8], task_id: usize) -> Self {
-        let (mem_set, sp, entry) = MemorySet::from_elf(elf);
-        let trap_ctx_addr = mem_set.trap_ctx().expect("TRAP_CONTEXT should be mapped");
-        let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(task_id);
-        {
-            KERNEL_SPACE.get_mut().push_empty_seg(
-                kernel_stack_bottom.into(),
-                kernel_stack_top.into(),
-                SegmentPermission::R | SegmentPermission::W,
-            );
-        }
-        unsafe {
-            *trap_ctx_addr.get_mut().unwrap() =
-                TrapCtx::new_app(entry, sp, KERNEL_SPACE.get().token(), kernel_stack_top);
-        }
-        let switch_ctx = SwitchCtx::restore(kernel_stack_top);
-        ProcessControlBlockInner {
-            status: ProcessStatus::Ready,
-            switch_ctx,
-            trap_ctx_addr,
-            mem_set,
-        }
     }
 }
 
@@ -321,7 +311,7 @@ fn trap_from_user() -> ! {
 }
 
 fn kernel_fail(inst_addr: usize, hint: &str) -> ! {
-    let pid = get_current_process().pid;
+    let pid = get_current_process().pid();
     error!("[kernel] {} pid: {}", hint, pid);
     error!("[kernel] instrument at {:#x}", inst_addr);
 

@@ -1,14 +1,6 @@
 #![no_std]
 #![no_main]
-#![feature(
-    panic_info_message,
-    set_ptr_value,
-    array_methods,
-    cell_leak,
-    ptr_from_ref,
-    step_trait,
-    alloc_error_handler
-)]
+#![feature(step_trait, alloc_error_handler)]
 #[macro_use]
 extern crate alloc;
 

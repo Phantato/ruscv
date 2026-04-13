@@ -3,7 +3,7 @@ pub mod frame_allocator;
 pub mod memory_set;
 mod page_table;
 
-use crate::sync::UPSafeCell;
+use crate::{error, sync::UPSafeCell};
 use alloc::sync::Arc;
 use memory_set::MemorySet;
 
