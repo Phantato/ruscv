@@ -1,3 +1,4 @@
+mod kernel_stack;
 mod process_control_block;
 mod status;
 use self::status::ProcessStatus;
@@ -167,7 +168,6 @@ impl ProcessManager {
     }
     pub fn get_current_process(&self) -> Option<Arc<ProcessControlBlock>> {
         let inner = self.inner.get();
-        error!("try get pid: {}", inner.current);
         // FIXME: this is a slot vec and the pid does not really need to be corresponding to the index
         inner.load.get(inner.current - 1).map(|pcb| pcb.clone())
     }

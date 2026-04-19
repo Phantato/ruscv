@@ -54,7 +54,7 @@ _app_names:"#
     )?;
     for app in apps.iter() {
         let mut app_name = app.to_owned();
-        while app_name.starts_with(|c|c >= '0' && c <= '9') {
+        while app_name.starts_with(|c| c >= '0' && c <= '9') {
             app_name.remove(0);
         }
         writeln!(f, r#"    .string "{}""#, app_name)?;

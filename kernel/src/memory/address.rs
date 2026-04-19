@@ -86,6 +86,12 @@ impl From<VirtPageNum> for VirtAddr {
     }
 }
 
+impl From<VirtAddr> for VirtPageNum {
+    fn from(v: VirtAddr) -> Self {
+        Self(v.0 >> PAGE_SIZE_BITS)
+    }
+}
+
 impl From<usize> for PhysPageNum {
     fn from(v: usize) -> Self {
         Self(v & ((1 << PPN_WIDTH) - 1))

@@ -1,4 +1,12 @@
-use crate::{memory::{address::PhysAddr, memory_set::{MemorySet, SegmentPermission}, *}, process::*, sync::UPSafeCell};
+use crate::{
+    memory::{
+        address::PhysAddr,
+        memory_set::{MemorySet, SegmentPermission},
+        *,
+    },
+    process::{kernel_stack::KernelStack, *},
+    sync::UPSafeCell,
+};
 
 lazy_static::lazy_static! {
     static ref PID_ALLOCATOR: UPSafeCell<PIDAllocator> = unsafe {
@@ -31,7 +39,7 @@ impl PIDAllocator {
     }
 }
 
-struct PID(usize);
+pub struct PID(pub usize);
 
 impl Drop for PID {
     fn drop(&mut self) {
@@ -49,6 +57,7 @@ pub(super) struct ProcessControlBlockInner {
     pub(super) switch_ctx: SwitchCtx,
     pub(super) trap_ctx_addr: PhysAddr,
     pub(super) mem_set: MemorySet,
+    pub(super) kernel_stack: KernelStack,
 }
 
 impl ProcessControlBlock {
@@ -75,27 +84,21 @@ impl ProcessControlBlock {
 }
 
 impl ProcessControlBlockInner {
-    fn from_elf(elf: &[u8], task_id: usize) -> Self {
+    fn from_elf(elf: &[u8], pid: usize) -> Self {
         let (mem_set, sp, entry) = MemorySet::from_elf(elf);
         let trap_ctx_addr = mem_set.trap_ctx().expect("TRAP_CONTEXT should be mapped");
-        let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(task_id);
-        {
-            KERNEL_SPACE.get_mut().push_empty_seg(
-                kernel_stack_bottom.into(),
-                kernel_stack_top.into(),
-                SegmentPermission::R | SegmentPermission::W,
-            );
-        }
+        let kernel_stack = KernelStack::new(pid);
         unsafe {
             *trap_ctx_addr.get_mut().unwrap() =
-                TrapCtx::new_app(entry, sp, KERNEL_SPACE.get().token(), kernel_stack_top);
+                TrapCtx::new_app(entry, sp, KERNEL_SPACE.get().token(), kernel_stack.top());
         }
-        let switch_ctx = SwitchCtx::restore(kernel_stack_top);
+        let switch_ctx = SwitchCtx::restore(kernel_stack.top());
         ProcessControlBlockInner {
             status: ProcessStatus::Ready,
             switch_ctx,
             trap_ctx_addr,
             mem_set,
+            kernel_stack
         }
     }
 }

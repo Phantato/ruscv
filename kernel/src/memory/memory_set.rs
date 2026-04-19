@@ -1,8 +1,8 @@
 extern crate alloc;
 
-use core::{arch::asm, slice};
+use core::{arch::asm, cmp::max, slice};
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::vec::Vec;
 use bitflags::bitflags;
 use riscv::register::satp;
 
@@ -12,7 +12,7 @@ use crate::{
         bstack, ebss, edata, ekernel, erodata, etext, sbss, sdata, srodata, stext, strampoline,
         tstack,
     },
-    memory::{KERNEL_SPACE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE},
+    memory::{page_table, KERNEL_SPACE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE},
     trace,
 };
 
@@ -41,7 +41,7 @@ bitflags! {
 struct Segment {
     start: VirtPageNum,
     end: VirtPageNum,
-    data_frames: BTreeMap<VirtPageNum, PageFrame>,
+    data_frames: Vec<Option<PageFrame>>,
     seg_type: SegmentType,
     seg_perm: SegmentPermission,
 }
@@ -55,12 +55,15 @@ impl Segment {
     ) -> Self {
         let start = start.floor();
         let end = end.ceil();
+
+        let mut data_frames = Vec::new();
+        data_frames.resize_with(if end.0 > start.0 { end.0 - start.0 } else { 0 }, || None);
         Self {
             start,
             end,
             seg_type,
             seg_perm,
-            data_frames: BTreeMap::new(),
+            data_frames,
         }
     }
 
@@ -70,19 +73,21 @@ impl Segment {
         }
     }
     fn unmap(&mut self, page_table: &mut PageTable) {
-        for vpn in self.start..self.end {
-            self.unmap_one(page_table, vpn)
-        }
+        self.unmap_area(page_table, self.start)
     }
     fn copy_data(&mut self, data: &[u8]) {
+        // FIXME: only works for framed seg.
         let mut start: usize = 0;
         let len = data.len();
-        for ref vpn in self.start..self.end {
+        for vpn in self.start..self.end {
             let src = &data[start..len.min(start + PAGE_SIZE)];
+            let idx = vpn.0 - self.start.0;
             let dst = &mut self
                 .data_frames
-                .get_mut(vpn)
+                .get_mut(idx)
                 .expect(&format!("vpn 0x{:x} not found", vpn.0))
+                .as_mut()
+                .expect(&format!("frame for vpn 0x{:x} not allocated", vpn.0))
                 .get_bytes_array_mut()[..src.len()];
             dst.copy_from_slice(src);
             start += PAGE_SIZE;
@@ -97,7 +102,12 @@ impl Segment {
             SegmentType::Framed => {
                 let frame = frame_alloc().unwrap();
                 let ppn = frame.ppn;
-                self.data_frames.insert(vpn, frame);
+                let idx = vpn.0 - self.start.0;
+                assert!(
+                    idx < self.data_frames.len(),
+                    "vpn should not exceed segment"
+                );
+                self.data_frames[idx] = Some(frame);
                 ppn
             }
             SegmentType::Linear(offset) => PhysPageNum(vpn.0 - offset),
@@ -107,11 +117,35 @@ impl Segment {
     fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         match self.seg_type {
             SegmentType::Framed => {
-                self.data_frames.remove(&vpn);
+                let idx = vpn.0 - self.start.0;
+                if idx < self.data_frames.len() {
+                    self.data_frames[idx] = None;
+                }
             }
             SegmentType::Linear(_) => {}
         }
         page_table.unmap(vpn)
+    }
+
+    fn contains(&self, vpn: VirtPageNum) -> bool {
+        self.start <= vpn && vpn < self.end
+    }
+
+    // Unmap from vpn to self.end, will not do the bound check
+    fn unmap_area(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+        for vpn in vpn..self.end {
+            self.unmap_one(page_table, vpn)
+        }
+        self.end = vpn;
+        // shrink vector if needed
+        let new_len = if self.end.0 > self.start.0 {
+            self.end.0 - self.start.0
+        } else {
+            0
+        };
+        if self.data_frames.len() > new_len {
+            self.data_frames.truncate(new_len);
+        }
     }
 }
 
@@ -238,7 +272,8 @@ impl MemorySet {
         );
         trace!(
             "kernel stack: [{:x}, {:x})",
-            bstack as usize, tstack as usize
+            bstack as usize,
+            tstack as usize
         );
         kernel.push(
             Segment::new(
@@ -327,6 +362,16 @@ impl MemorySet {
             segment.copy_data(data);
         }
         self.segments.push(segment);
+    }
+
+    pub fn remove_area(&mut self, vpn: VirtPageNum) {
+        for seg in self.segments.iter_mut() {
+            if seg.contains(vpn) {
+                seg.unmap_area(&mut self.page_table, vpn);
+                // FIXME: check empty and remove this segment also
+                break;
+            }
+        }
     }
 
     #[inline(always)]

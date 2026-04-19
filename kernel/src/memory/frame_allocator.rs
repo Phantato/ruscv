@@ -3,7 +3,10 @@ use super::{
     MEMORY_END, PAGE_SIZE,
 };
 use crate::{
-    kernel_address::{ekernel, skernel}, sync::UPSafeCell, info, trace
+    info,
+    kernel_address::{ekernel, skernel},
+    sync::UPSafeCell,
+    trace,
 };
 use alloc::vec::Vec;
 

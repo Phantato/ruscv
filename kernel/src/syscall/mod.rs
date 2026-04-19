@@ -3,7 +3,10 @@ mod process;
 
 use self::{fs::sys_write, process::*};
 use crate::{
-    fmt_str, memory::PTEFlags, process::get_current_process, timer::{MICRO_PER_SEC, get_time_us}
+    fmt_str,
+    memory::PTEFlags,
+    process::get_current_process,
+    timer::{get_time_us, MICRO_PER_SEC},
 };
 
 pub const MAX_MSG_LEN: usize = 32;

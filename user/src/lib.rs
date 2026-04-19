@@ -62,7 +62,9 @@ pub fn exec(path: &str) -> isize {
 pub fn wait(exit_code: &mut i32) -> isize {
     loop {
         match sys_waitpid(-1, exit_code as *mut _) {
-            -2 => {yield_();}
+            -2 => {
+                yield_();
+            }
             exit_pid => return exit_pid,
         }
     }
@@ -71,10 +73,12 @@ pub fn wait(exit_code: &mut i32) -> isize {
 pub fn waitpid(pid: usize, exit_code: &mut i32) -> isize {
     loop {
         match sys_waitpid(pid as isize, exit_code as *mut _) {
-            -2 => {yield_();}
+            -2 => {
+                yield_();
+            }
             exit_pid => return exit_pid,
         }
-    }    
+    }
 }
 
 mod panic {
