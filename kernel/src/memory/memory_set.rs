@@ -23,7 +23,7 @@ use super::{
     MEMORY_END, PAGE_SIZE,
 };
 
-#[allow(unused)]
+#[derive(Clone, Copy)]
 pub enum SegmentType {
     Framed,
     Linear(usize),
@@ -66,6 +66,29 @@ impl Segment {
             data_frames,
         }
     }
+    fn fork(&self, page_table: &mut PageTable) -> Self {
+        let mut child = Self {
+            start: self.start,
+            end: self.end,
+            seg_type: self.seg_type,
+            seg_perm: self.seg_perm,
+            data_frames: {
+                let mut vec = Vec::with_capacity(self.data_frames.capacity());
+                vec.resize_with(self.data_frames.len(), || None);
+                vec
+            },
+        };
+        for (idx, frame ) in self.data_frames.iter().enumerate() {
+            let Some(frame) = frame else {
+                continue;
+            };
+            let vpn = VirtPageNum(self.start.0 + idx);
+            child.map_one(page_table, vpn);
+            // FIXME: this only works for Framed Seg.
+            child.copy_one(frame.get_bytes_array_mut(), vpn);
+        }
+        child
+    }
 
     fn map(&mut self, page_table: &mut PageTable) {
         for vpn in self.start..self.end {
@@ -81,20 +104,24 @@ impl Segment {
         let len = data.len();
         for vpn in self.start..self.end {
             let src = &data[start..len.min(start + PAGE_SIZE)];
-            let idx = vpn.0 - self.start.0;
-            let dst = &mut self
-                .data_frames
-                .get_mut(idx)
-                .expect(&format!("vpn 0x{:x} not found", vpn.0))
-                .as_mut()
-                .expect(&format!("frame for vpn 0x{:x} not allocated", vpn.0))
-                .get_bytes_array_mut()[..src.len()];
-            dst.copy_from_slice(src);
+            self.copy_one(src, vpn);
             start += PAGE_SIZE;
             if start >= len {
                 break;
             }
         }
+    }
+
+    fn copy_one(&mut self, src: &[u8], vpn: VirtPageNum) {
+        let idx = vpn.0 - self.start.0;
+        let dst = &mut self
+            .data_frames
+            .get_mut(idx)
+            .expect(&format!("vpn 0x{:x} not found", vpn.0))
+            .as_mut()
+            .expect(&format!("frame for vpn 0x{:x} not allocated", vpn.0))
+            .get_bytes_array_mut()[..src.len()];
+        dst.copy_from_slice(src);
     }
     fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let flags = PTEFlags::from_bits(self.seg_perm.bits).unwrap();
@@ -235,6 +262,14 @@ impl MemorySet {
             user_stack_top,
             elf.header.pt2.entry_point() as usize,
         )
+    }
+
+    pub fn fork(&self) -> Self {
+        let mut child = MemorySet::new();
+        for seg in &self.segments {
+            child.segments.push(seg.fork(&mut child.page_table));
+        }
+        return child
     }
 
     pub fn new_kernel() -> Self {
