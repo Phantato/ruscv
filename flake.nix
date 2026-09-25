@@ -67,6 +67,8 @@
             gnumake
             qemu
             git
+            tmux
+            netcat-openbsd
 
             rust
             rust-analyzer
