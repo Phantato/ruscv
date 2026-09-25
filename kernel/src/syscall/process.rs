@@ -10,3 +10,8 @@ pub fn sys_yield() -> isize {
     process::suspend_current();
     0
 }
+
+pub fn sys_fork() -> isize {
+    let child = process::fork_current();
+    child.map_or(-1, |pcb| pcb.pid().to_raw())
+}

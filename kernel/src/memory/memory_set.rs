@@ -23,7 +23,7 @@ use super::{
     MEMORY_END, PAGE_SIZE,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SegmentType {
     Framed,
     Linear(usize),
@@ -66,7 +66,10 @@ impl Segment {
             data_frames,
         }
     }
-    fn fork(&self, page_table: &mut PageTable) -> Self {
+    fn fork(&self, page_table: &mut PageTable) -> Result<Self, ()> {
+        if self.seg_type != SegmentType::Framed {
+            return Err(());
+        }
         let mut child = Self {
             start: self.start,
             end: self.end,
@@ -87,7 +90,7 @@ impl Segment {
             // FIXME: this only works for Framed Seg.
             child.copy_one(frame.get_bytes_array_mut(), vpn);
         }
-        child
+        Ok(child)
     }
 
     fn map(&mut self, page_table: &mut PageTable) {
@@ -184,7 +187,7 @@ pub struct MemorySet {
 impl MemorySet {
     // /// Include sections in elf and trampoline and TrapContext and user stack,
     // /// also returns user_sp and entry point.
-    pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize) {
+    pub fn from_elf(elf_data: &[u8]) -> Result<(Self, usize, usize), ()> {
         let mut memory_set = Self::new();
         // map trampoline
         memory_set.map_trampoline(
@@ -257,14 +260,15 @@ impl MemorySet {
             ),
             None,
         );
-        (
+        Ok((
             memory_set,
             user_stack_top,
             elf.header.pt2.entry_point() as usize,
-        )
+        ))
     }
 
-    pub fn fork(&self) -> Self {
+    // FIXME: only allow fragment mem set
+    pub fn fork(&self) -> Result<Self, ()> {
         let mut child = MemorySet::new();
         child.map_trampoline(KERNEL_SPACE
                 .get()
@@ -272,9 +276,9 @@ impl MemorySet {
                 .expect("text seg should be mapped!")
                 .floor());
         for seg in &self.segments {
-            child.segments.push(seg.fork(&mut child.page_table));
+            child.segments.push(seg.fork(&mut child.page_table)?);
         }
-        return child
+        Ok(child)
     }
 
     pub fn new_kernel() -> Self {
@@ -377,8 +381,8 @@ impl MemorySet {
         self.page_table.translate_user(va, expect)
     }
 
-    pub fn trap_ctx(&self) -> Option<PhysAddr> {
-        self.translate(VirtAddr::from(TRAP_CONTEXT))
+    pub fn trap_ctx(&self) -> PhysAddr {
+        self.translate(VirtAddr::from(TRAP_CONTEXT)).expect("trap_ctx should be mapped")
     }
 
     fn map_trampoline(&mut self, trampoline_ppn: PhysPageNum) {

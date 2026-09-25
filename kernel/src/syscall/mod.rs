@@ -1,7 +1,9 @@
 mod fs;
 mod process;
+mod constant;
 
 use self::{fs::sys_write, process::*};
+pub use constant::*;
 use crate::{
     fmt_str,
     memory::PTEFlags,
@@ -9,11 +11,8 @@ use crate::{
     timer::{get_time_us, MICRO_PER_SEC},
 };
 
+
 pub const MAX_MSG_LEN: usize = 32;
-const SYSCALL_WRITE: usize = 64;
-const SYSCALL_EXIT: usize = 93;
-const SYSCALL_YIELD: usize = 124;
-const SYSCALL_GET_TIME: usize = 169;
 // use self::fs::*;
 
 /// handle syscall exception with `syscall_id` and other arguments
@@ -30,12 +29,14 @@ pub fn syscall(
         SYSCALL_EXIT => sys_exit(args[0] as i32),
         SYSCALL_YIELD => Ok(sys_yield()),
         SYSCALL_GET_TIME => sys_get_time(args[0], args[1]),
+        SYSCALL_FORK => Ok(sys_fork()),
         _ => {
             fmt_str!(error, "Unsupported syscall_id: {:#x}", syscall_id).unwrap();
             Err(())
         }
     }
 }
+
 fn sys_get_time(va: usize, _tz: usize) -> Result<isize, ()> {
     let task = get_current_process();
     let pa = task.translate(va.into(), PTEFlags::W)?;
