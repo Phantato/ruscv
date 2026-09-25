@@ -125,8 +125,18 @@ impl Step for VirtPageNum {
         usize::forward_checked(start.0, count).map(|s| s.into())
     }
 
+    fn forward_overflowing(start: Self, count: usize) -> (Self, bool) {
+        let (s, o) = usize::forward_overflowing(start.0, count);
+        (s.into(), o)
+    }
+
     fn backward_checked(start: Self, count: usize) -> Option<Self> {
         usize::backward_checked(start.0, count).map(|s| s.into())
+    }
+
+    fn backward_overflowing(start: Self, count: usize) -> (Self, bool) {
+        let (s, o) = usize::backward_overflowing(start.0, count);
+        (s.into(), o)
     }
 }
 
@@ -139,7 +149,17 @@ impl Step for PhysPageNum {
         usize::forward_checked(start.0, count).map(|s| s.into())
     }
 
+    fn forward_overflowing(start: Self, count: usize) -> (Self, bool) {
+        let (s, o) = usize::forward_overflowing(start.0, count);
+        (s.into(), o)
+    }
+
     fn backward_checked(start: Self, count: usize) -> Option<Self> {
         usize::backward_checked(start.0, count).map(|s| s.into())
+    }
+
+    fn backward_overflowing(start: Self, count: usize) -> (Self, bool) {
+        let (s, o) = usize::backward_overflowing(start.0, count);
+        (s.into(), o)
     }
 }

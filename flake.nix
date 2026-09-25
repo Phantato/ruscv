@@ -86,7 +86,8 @@
             export CARGO_TARGET_DIR="$PWD/target"
 
             # Make cargo use the git CLI for fetching git dependencies (supports proxy/ssh)
-            export CARGO_NET_GIT_FETCH_WITH_CLI=1
+            # Value must be `true`/`false` or cargo errors out.
+            export CARGO_NET_GIT_FETCH_WITH_CLI=true
           '';
         };
       }
