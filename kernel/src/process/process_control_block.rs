@@ -1,7 +1,7 @@
 use crate::{
     memory::{
         address::PhysAddr,
-        memory_set::{MemorySet, SegmentPermission},
+        memory_set::MemorySet,
         *,
     },
     process::{kernel_stack::KernelStack, *},
@@ -26,12 +26,12 @@ impl PIDAllocator {
             recycled: vec![],
         }
     }
-    fn alloc(&mut self) -> PID {
+    fn alloc(&mut self) -> PIDSlot {
         if let Some(id) = self.recycled.pop() {
-            PID(id)
+            PIDSlot(id)
         } else {
             self.next += 1;
-            PID(self.next - 1)
+            PIDSlot(self.next - 1)
         }
     }
     fn dealloc(&mut self, id: usize) {
@@ -39,17 +39,33 @@ impl PIDAllocator {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PID(pub usize);
 
-impl Drop for PID {
+impl core::fmt::Display for PID{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+struct PIDSlot(usize);
+
+impl PIDSlot {
+    fn pid(&self) -> PID {
+        PID(self.0)
+    }
+}
+
+impl Drop for PIDSlot {
     fn drop(&mut self) {
         PID_ALLOCATOR.get_mut().dealloc(self.0);
     }
 }
 
 pub struct ProcessControlBlock {
-    pid: PID,
     pub(super) inner: UPSafeCell<ProcessControlBlockInner>,
+    // this should be recycled at the last.
+    slot: PIDSlot,
 }
 // TODO: remove all these pub(super)
 pub(super) struct ProcessControlBlockInner {
@@ -61,8 +77,8 @@ pub(super) struct ProcessControlBlockInner {
 }
 
 impl ProcessControlBlock {
-    pub fn pid(&self) -> usize {
-        self.pid.0
+    pub fn pid(&self) -> PID {
+        self.slot.pid()
     }
     pub(super) fn trap_ctx(&self) -> &'static mut TrapCtx {
         unsafe { self.inner.get().trap_ctx_addr.get_mut().unwrap() }
@@ -71,11 +87,11 @@ impl ProcessControlBlock {
         self.inner.get().mem_set.token()
     }
     pub(super) fn from_elf(elf: &[u8]) -> Self {
-        let pid = PID_ALLOCATOR.get_mut().alloc();
-        let id = pid.0;
+        let slot = PID_ALLOCATOR.get_mut().alloc();
+        let pid = slot.pid();
         Self {
-            pid,
-            inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::from_elf(elf, id)) },
+            slot,
+            inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::from_elf(elf, pid)) },
         }
     }
     pub fn translate(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
@@ -84,10 +100,10 @@ impl ProcessControlBlock {
 }
 
 impl ProcessControlBlockInner {
-    fn from_elf(elf: &[u8], pid: usize) -> Self {
+    fn from_elf(elf: &[u8], pid: PID) -> Self {
         let (mem_set, sp, entry) = MemorySet::from_elf(elf);
         let trap_ctx_addr = mem_set.trap_ctx().expect("TRAP_CONTEXT should be mapped");
-        let kernel_stack = KernelStack::new(pid);
+        let kernel_stack = KernelStack::new(pid.0);
         unsafe {
             *trap_ctx_addr.get_mut().unwrap() =
                 TrapCtx::new_app(entry, sp, KERNEL_SPACE.get().token(), kernel_stack.top());
@@ -98,7 +114,7 @@ impl ProcessControlBlockInner {
             switch_ctx,
             trap_ctx_addr,
             mem_set,
-            kernel_stack
+            kernel_stack,
         }
     }
 }

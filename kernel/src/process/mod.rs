@@ -2,6 +2,7 @@ mod kernel_stack;
 mod process_control_block;
 mod status;
 use self::status::ProcessStatus;
+use crate::process::process_control_block::PID;
 use crate::timer::set_next_trigger;
 use crate::{
     error,
@@ -11,6 +12,7 @@ use crate::{
     syscall::{syscall, MAX_MSG_LEN},
     trace,
 };
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::{collections::VecDeque, sync::Arc};
 use core::arch::{asm, global_asm};
@@ -97,8 +99,9 @@ struct ProcessManager {
     inner: UPSafeCell<ProcessManagerInner>,
 }
 struct ProcessManagerInner {
-    current: usize,
-    load: VecDeque<Arc<ProcessControlBlock>>,
+    current: Option<PID>,
+    ready: VecDeque<PID>,
+    load: BTreeMap<PID, Arc<ProcessControlBlock>>,
 }
 
 fn get_num_app() -> usize {
@@ -109,18 +112,22 @@ fn get_num_app() -> usize {
     unsafe { num_ptr.read_volatile() }
 }
 
+const CURRENT_PROCESS_NOT_EXIST_ERR: &str = "current pcb should exist";
+
 impl ProcessManager {
     unsafe fn new() -> Self {
         let mut load = APP_BINS
             .iter()
-            .map(|elf| Arc::new(ProcessControlBlock::from_elf(*elf)))
-            .collect::<VecDeque<_>>();
-        // FIXME: remove initproc & user_shell for now
-        load.pop_back();
-        load.pop_back();
+            .map(|elf| {
+                let pcb = Arc::new(ProcessControlBlock::from_elf(*elf));
+                (pcb.pid(), pcb)
+            })
+            .collect::<BTreeMap<_, _>>();
         trace!("bin num: {}", load.len());
+
         let inner = UPSafeCell::new(ProcessManagerInner {
-            current: load.len() - 1,
+            current: None,
+            ready: load.keys().map(|pid| *pid).collect(),
             load,
         });
         Self { inner }
@@ -132,53 +139,61 @@ impl ProcessManager {
     }
 
     pub fn run_next_process(&self, current_ctx: *mut SwitchCtx) {
-        match self.find_next_ready_task() {
-            Some(pcb) => {
-                let next_ctx = {
-                    let mut inner = pcb.inner.get_mut();
-                    inner.status = ProcessStatus::Running;
-                    &inner.switch_ctx as *const SwitchCtx
-                };
-                {
-                    let mut inner = self.inner.get_mut();
-                    inner.current = pcb.pid();
-                }
+        match self.inner.get_mut().ready.pop_front() {
+            Some(pid) => {
+                    let next_ctx = {
+                        let mut inner = self.inner.get_mut();
+                        inner.current = Some(pid);
+                        let pcb = inner
+                        .load
+                        .get(&pid)
+                        .expect(&format!("pcb {} should exist", pid.0));
+
+                        let mut inner = pcb.inner.get_mut();
+                        inner.status = ProcessStatus::Running;
+                        &inner.switch_ctx as *const SwitchCtx
+                    };
                 unsafe { __switch(current_ctx, next_ctx) }
             }
             None => shutdown(false),
         }
     }
-    fn find_next_ready_task(&self) -> Option<Arc<ProcessControlBlock>> {
-        let inner = self.inner.get_mut();
-        let current = inner.current;
-        // FIXME: after using ready queue, this loop based finding needs to be deprecated.
-        (current..current + inner.load.len())
-            .map(|idx| inner.load[idx % inner.load.len()].clone())
-            .find(|pcb| pcb.inner.get().status == ProcessStatus::Ready)
-    }
+
     fn mark_current_ready(&self) {
-        let inner = self.inner.get_mut();
-        let mut pcb_inner = inner.load[inner.current - 1].inner.get_mut();
-        pcb_inner.status = ProcessStatus::Ready
+        let mut inner = self.inner.get_mut();
+        let current = inner.current.unwrap();
+        let pcb = inner.must_get_current_pcb();
+        let mut pcb_inner = pcb.inner.get_mut();
+        pcb_inner.status = ProcessStatus::Ready;
+        inner.ready.push_back(current);
     }
-    fn mark_current_exited(&self) {
-        let inner = self.inner.get_mut();
-        let mut pcb_inner = inner.load[inner.current - 1].inner.get_mut();
-        pcb_inner.status = ProcessStatus::Exited
+    fn mark_current_exited(&self, _exit_code: i32) {
+        let pcb = self.must_get_current_process();
+        let mut inner = pcb.inner.get_mut();
+        inner.status = ProcessStatus::Exited;
     }
     pub fn get_current_process(&self) -> Option<Arc<ProcessControlBlock>> {
-        let inner = self.inner.get();
-        // FIXME: this is a slot vec and the pid does not really need to be corresponding to the index
-        inner.load.get(inner.current - 1).map(|pcb| pcb.clone())
+        self.inner.get().get_current_pcb()
+    }
+    pub fn must_get_current_process(&self) -> Arc<ProcessControlBlock> {
+        self.inner.get().must_get_current_pcb()
     }
     fn get_current_switch_ctx(&self) -> *mut SwitchCtx {
-        let pcb = self.get_current_process().unwrap();
+        let pcb = self.must_get_current_process();
         let mut inner = pcb.inner.get_mut();
         &mut inner.switch_ctx as *mut SwitchCtx
     }
     fn get_current_satp(&self) -> usize {
-        let pcb = self.get_current_process().unwrap();
-        pcb.satp()
+        self.must_get_current_process().satp()
+    }
+}
+
+impl ProcessManagerInner {
+    fn get_current_pcb(&self) -> Option<Arc<ProcessControlBlock>> {
+        self.current.and_then(|pid| self.load.get(&pid)).map(|pcb| pcb.clone())
+    }
+    fn must_get_current_pcb(&self) -> Arc<ProcessControlBlock> {
+        self.get_current_pcb().expect(CURRENT_PROCESS_NOT_EXIST_ERR)
     }
 }
 
@@ -259,8 +274,8 @@ pub fn suspend_current() {
     PROCESS_MANAGER.run_next_process(PROCESS_MANAGER.get_current_switch_ctx())
 }
 
-pub fn exit_current() -> ! {
-    PROCESS_MANAGER.mark_current_exited();
+pub fn exit_current(exit_code: i32) -> ! {
+    PROCESS_MANAGER.mark_current_exited(exit_code);
     PROCESS_MANAGER.run_next_process(PROCESS_MANAGER.get_current_switch_ctx());
     unreachable!("process is exited");
 }
@@ -315,7 +330,7 @@ fn kernel_fail(inst_addr: usize, hint: &str) -> ! {
     error!("[kernel] {} pid: {}", hint, pid);
     error!("[kernel] instrument at {:#x}", inst_addr);
 
-    exit_current();
+    exit_current(128);
 }
 
 fn restore_to_user() -> ! {
