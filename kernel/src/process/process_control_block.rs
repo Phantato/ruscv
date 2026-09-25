@@ -1,9 +1,5 @@
 use crate::{
-    memory::{
-        address::PhysAddr,
-        memory_set::MemorySet,
-        *,
-    },
+    memory::{address::PhysAddr, memory_set::MemorySet, *},
     process::{kernel_stack::KernelStack, *},
     sync::UPSafeCell,
 };
@@ -42,7 +38,7 @@ impl PIDAllocator {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PID(pub usize);
 
-impl core::fmt::Display for PID{
+impl core::fmt::Display for PID {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -94,6 +90,14 @@ impl ProcessControlBlock {
             inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::from_elf(elf, pid)) },
         }
     }
+    pub(super) fn fork(parent: &Self) -> Self {
+        let slot = PID_ALLOCATOR.get_mut().alloc();
+        let pid = slot.pid();
+        Self {
+            slot,
+            inner: unsafe { UPSafeCell::new(parent.inner.get().fork(pid)) },
+        }
+    }
     pub fn translate(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
         self.inner.get().mem_set.translate_user(va, expect)
     }
@@ -111,6 +115,29 @@ impl ProcessControlBlockInner {
         let switch_ctx = SwitchCtx::restore(kernel_stack.top());
         ProcessControlBlockInner {
             status: ProcessStatus::Ready,
+            children: vec!(),
+            exit_code: 0,
+            switch_ctx,
+            trap_ctx_addr,
+            mem_set,
+            kernel_stack,
+        }
+    }
+    fn fork(&self, pid: PID) -> Self {
+        let mem_set = self.mem_set.fork();
+        let trap_ctx_addr = mem_set.trap_ctx().expect("TRAP_CONTEXT should be mapped");
+        let kernel_stack = KernelStack::new(pid.0);
+        unsafe {
+            let trap_ctx = trap_ctx_addr.get_mut::<TrapCtx>().unwrap();
+            trap_ctx.x[10] = 0;
+            trap_ctx.sepc += 4;
+            trap_ctx.kernel_sp = kernel_stack.top();
+        }
+        let switch_ctx = SwitchCtx::restore(kernel_stack.top());
+        ProcessControlBlockInner {
+            status: ProcessStatus::Ready,
+            children: vec!(),
+            exit_code: 0,
             switch_ctx,
             trap_ctx_addr,
             mem_set,

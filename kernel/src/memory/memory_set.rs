@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use core::{arch::asm, cmp::max, slice};
+use core::{arch::asm, slice};
 
 use alloc::vec::Vec;
 use bitflags::bitflags;
@@ -12,7 +12,7 @@ use crate::{
         bstack, ebss, edata, ekernel, erodata, etext, sbss, sdata, srodata, stext, strampoline,
         tstack,
     },
-    memory::{page_table, KERNEL_SPACE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE},
+    memory::{KERNEL_SPACE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE},
     trace,
 };
 
@@ -56,7 +56,7 @@ impl Segment {
         let start = start.floor();
         let end = end.ceil();
 
-        let mut data_frames = Vec::new();
+        let mut data_frames = vec!();
         data_frames.resize_with(if end.0 > start.0 { end.0 - start.0 } else { 0 }, || None);
         Self {
             start,
@@ -266,6 +266,11 @@ impl MemorySet {
 
     pub fn fork(&self) -> Self {
         let mut child = MemorySet::new();
+        child.map_trampoline(KERNEL_SPACE
+                .get()
+                .translate(VirtAddr::from(strampoline as usize))
+                .expect("text seg should be mapped!")
+                .floor());
         for seg in &self.segments {
             child.segments.push(seg.fork(&mut child.page_table));
         }
@@ -387,7 +392,7 @@ impl MemorySet {
     fn new() -> Self {
         Self {
             page_table: PageTable::new(),
-            segments: Vec::new(),
+            segments: vec!(),
         }
     }
 
