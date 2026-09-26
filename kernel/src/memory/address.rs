@@ -1,4 +1,7 @@
-use core::{iter::Step, ops::Add};
+use core::{
+    iter::Step,
+    ops::{Add, AddAssign},
+};
 
 use super::{PAGE_SIZE, PAGE_SIZE_BITS, PA_WIDTH, PPN_WIDTH, PTE_PER_PAGE, VA_WIDTH, VPN_WIDTH};
 
@@ -35,10 +38,14 @@ impl PhysAddr {
     pub fn ceil(&self) -> PhysPageNum {
         PhysPageNum((self.0 + PAGE_SIZE - 1) >> PAGE_SIZE_BITS)
     }
+    pub unsafe fn get<T>(&self) -> Option<&'static T> {
+        (self.0 as *const T).as_ref()
+    }
     pub unsafe fn get_mut<T>(&self) -> Option<&'static mut T> {
         (self.0 as *mut T).as_mut()
     }
 }
+
 impl Add<usize> for PhysAddr {
     type Output = Self;
 
@@ -74,6 +81,13 @@ impl VirtAddr {
         self.0 & ((1 << PAGE_SIZE_BITS) - 1)
     }
 }
+
+impl AddAssign<usize> for VirtAddr {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs
+    }
+}
+
 impl From<usize> for VirtAddr {
     fn from(v: usize) -> Self {
         Self(v & ((1 << VA_WIDTH) - 1))

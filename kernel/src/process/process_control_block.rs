@@ -1,3 +1,5 @@
+use alloc::string::String;
+
 use crate::{
     memory::{address::PhysAddr, memory_set::MemorySet, *},
     process::{kernel_stack::KernelStack, *},
@@ -67,19 +69,19 @@ impl Drop for PIDSlot {
 }
 
 pub struct ProcessControlBlock {
-    pub(super) inner: UPSafeCell<ProcessControlBlockInner>,
+    pub inner: UPSafeCell<ProcessControlBlockInner>,
     // this should be recycled at the last.
     slot: PIDSlot,
 }
 // TODO: remove all these pub(super)
-pub(super) struct ProcessControlBlockInner {
-    pub(super) status: ProcessStatus,
+pub struct ProcessControlBlockInner {
+    pub status: ProcessStatus,
     pub(super) switch_ctx: SwitchCtx,
     pub(super) trap_ctx_addr: PhysAddr,
-    pub(super) mem_set: MemorySet,
+    pub mem_set: MemorySet,
     pub(super) kernel_stack: KernelStack,
-    pub(super) children: Vec<PID>,
-    pub(super) exit_code: i32,
+    pub children: Vec<Arc<ProcessControlBlock>>,
+    pub exit_code: i32,
 }
 
 impl ProcessControlBlock {
@@ -108,8 +110,8 @@ impl ProcessControlBlock {
             inner: unsafe { UPSafeCell::new(self.inner.get().fork(pid)?) },
         }))
     }
-    pub fn translate(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
-        self.inner.get().mem_set.translate_user(va, expect)
+    pub(super) fn exec(&self, elf: &[u8]) -> Result<(), ()> {
+        self.inner.get_mut().exec(elf)
     }
 }
 
@@ -125,7 +127,7 @@ impl ProcessControlBlockInner {
         let switch_ctx = SwitchCtx::restore(kernel_stack.top());
         Ok(ProcessControlBlockInner {
             status: ProcessStatus::Ready,
-            children: vec!(),
+            children: vec![],
             exit_code: 0,
             switch_ctx,
             trap_ctx_addr,
@@ -148,7 +150,7 @@ impl ProcessControlBlockInner {
         let switch_ctx = SwitchCtx::restore(kernel_stack.top());
         Ok(ProcessControlBlockInner {
             status: ProcessStatus::Ready,
-            children: vec!(),
+            children: vec![],
             exit_code: 0,
             switch_ctx,
             trap_ctx_addr,
@@ -156,5 +158,37 @@ impl ProcessControlBlockInner {
             kernel_stack,
         })
     }
-}
+    fn exec(&mut self, elf: &[u8]) -> Result<(), ()> {
+        let (mem_set, sp, entry) = MemorySet::from_elf(elf)?;
+        let trap_ctx_addr = mem_set.trap_ctx();
+        unsafe {
+            *trap_ctx_addr.get_mut().unwrap() = TrapCtx::new_app(
+                entry,
+                sp,
+                KERNEL_SPACE.get().token(),
+                self.kernel_stack.top(),
+            );
+        }
+        self.mem_set = mem_set;
+        self.trap_ctx_addr = trap_ctx_addr;
+        Ok(())
+    }
 
+    pub fn get_user_str(&self, ptr: *const u8) -> Result<String, ()> {
+        let mut string = String::new();
+        let mut va = VirtAddr(ptr as usize);
+        loop {
+            let ch = unsafe { *self.translate(va, PTEFlags::R)?.get_mut().ok_or(())? };
+            if ch == '\0' {
+                break;
+            } else {
+                string.push(ch);
+                va += 1;
+            }
+        }
+        Ok(string)
+    }
+    pub fn translate(&self, va: VirtAddr, expect: PTEFlags) -> Result<PhysAddr, ()> {
+        self.mem_set.translate_user(va, expect)
+    }
+}

@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use core::{arch::asm, slice};
+use core::{arch::asm, cmp::max, slice};
 
 use alloc::vec::Vec;
 use bitflags::bitflags;
@@ -179,6 +179,8 @@ impl Segment {
     }
 }
 
+// FIXME: segments can be recycled before dropping the mem set
+// once the process is exited
 pub struct MemorySet {
     pub page_table: PageTable,
     segments: Vec<Segment>,
@@ -221,7 +223,7 @@ impl MemorySet {
                     map_perm |= SegmentPermission::X;
                 }
                 let seg = Segment::new(start_va, end_va, SegmentType::Framed, map_perm);
-                max_end_vpn = seg.end;
+                max_end_vpn = max(max_end_vpn, seg.end);
                 memory_set.push(
                     seg,
                     Some(&elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize]),

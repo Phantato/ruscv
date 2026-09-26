@@ -10,8 +10,8 @@ const FD_STDOUT: usize = 1;
 
 /// write buf of length `len` to a file with `fd`
 pub fn sys_write(fd: usize, buf: usize, len: usize) -> Result<isize, &'static str> {
-    let task = get_current_process();
-    let contents = get_strs(buf, len, &task)?;
+    let task = get_current_process().unwrap();
+    let contents = get_buf(buf, len, &task)?;
     match fd {
         FD_STDOUT => {
             for ele in contents {
@@ -23,15 +23,15 @@ pub fn sys_write(fd: usize, buf: usize, len: usize) -> Result<isize, &'static st
     }
 }
 
-fn get_strs(
+fn get_buf(
     mut buf: usize,
     mut len: usize,
-    task: &ProcessControlBlock,
+    pcb: &ProcessControlBlock,
 ) -> Result<Vec<&str>, &'static str> {
     let mut ret = vec![];
     while len > 0 {
-        // TODO: this is not safe, because we haven't check the permission.
-        if let Ok(pa) = task.translate(buf.into(), PTEFlags::R) {
+        let inner = pcb.inner.get();
+        if let Ok(pa) = inner.translate(buf.into(), PTEFlags::R) {
             let diff = (VirtAddr::from(VirtAddr::from(buf + 1).ceil()).0 - buf).clamp(0, len);
             assert!(diff > 0);
             // linearly map physical space rather identical map.
@@ -46,3 +46,4 @@ fn get_strs(
     }
     Ok(ret)
 }
+

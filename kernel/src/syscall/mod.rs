@@ -1,16 +1,15 @@
+mod constant;
 mod fs;
 mod process;
-mod constant;
 
-use self::{fs::sys_write, process::*};
-pub use constant::*;
+use self::{fs::*, process::*};
 use crate::{
     fmt_str,
     memory::PTEFlags,
     process::get_current_process,
     timer::{get_time_us, MICRO_PER_SEC},
 };
-
+pub use constant::*;
 
 pub const MAX_MSG_LEN: usize = 32;
 // use self::fs::*;
@@ -27,9 +26,11 @@ pub fn syscall(
             Err(())
         }),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
-        SYSCALL_YIELD => Ok(sys_yield()),
+        SYSCALL_YIELD => sys_yield(),
         SYSCALL_GET_TIME => sys_get_time(args[0], args[1]),
-        SYSCALL_FORK => Ok(sys_fork()),
+        SYSCALL_FORK => sys_fork(),
+        SYSCALL_EXEC => sys_exec(args[0] as *const u8),
+        SYSCALL_WAITPID => sys_waitpid(args[0] as isize, args[1]),
         _ => {
             fmt_str!(error, "Unsupported syscall_id: {:#x}", syscall_id).unwrap();
             Err(())
@@ -38,16 +39,16 @@ pub fn syscall(
 }
 
 fn sys_get_time(va: usize, _tz: usize) -> Result<isize, ()> {
-    let task = get_current_process();
-    let pa = task.translate(va.into(), PTEFlags::W)?;
-    // TODO: this is not safe, because we haven't check the permission.
-    let ts = pa.0 as *mut TimeVal;
+    let pcb = get_current_process().unwrap();
+    let inner = pcb.inner.get();
+    let ts = inner.translate(va.into(), PTEFlags::W)?;
     let t = get_time_us();
     unsafe {
-        (*ts).sec = t / MICRO_PER_SEC;
-        (*ts).usec = t % MICRO_PER_SEC;
+        *ts.get_mut().ok_or(())? = TimeVal {
+            sec: t / MICRO_PER_SEC,
+            usec: t % MICRO_PER_SEC,
+        };
     }
-
     Ok(0)
 }
 
