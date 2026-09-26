@@ -13,6 +13,8 @@ __switch:
     #     current_task_cx_ptr: *mut TaskContext,
     #     next_task_cx_ptr: *const TaskContext
     # )
+    beqz a0, 2f
+1:
     sd sp, 8(a0)
     sd ra, 0(a0)
     .set n, 0
@@ -20,6 +22,7 @@ __switch:
         SAVE_SN %n
         .set n, n+1
     .endr
+2:
     ld ra, 0(a1)
     .set n, 0
     .rept 12
