@@ -2,11 +2,10 @@
   description = "Development flake for ruscv (provides Rust toolchain and QEMU)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-
-    rust-overlay.url = "github:oxalica/rust-overlay";
-    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    pins.url = "git+ssh://git@git.my.home/phantato/nix-pins?rev=1be378ae3e32f0b28ddb61f7602e3ced6e1553c9";
+    nixpkgs.follows = "pins/nixpkgs";
+    flake-utils.follows = "pins/flake-utils";
+    rust-overlay.follows = "pins/rust-overlay";
 
     crane.url = "github:ipetkov/crane";
 
@@ -20,6 +19,7 @@
     {
       self,
       nixpkgs,
+      pins,
       flake-utils,
       rust-overlay,
       crane,
@@ -29,21 +29,17 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        overlays = [ (import rust-overlay) ];
-        pkgs = import nixpkgs { inherit system overlays; };
+        pkgs = pins.lib.pkgsFor system;
         craneLib = crane.mkLib pkgs;
 
         # Rust toolchain for the host (used to build the kernel and user apps)
-        rust = pkgs.rust-bin.selectLatestNightlyWith (
-          toolchain:
-          toolchain.default.override {
-            targets = [ "riscv64gc-unknown-none-elf" ];
-            extensions = [
-              "llvm-tools-preview"
-              "rust-src"
-            ];
-          }
-        );
+        rust = pkgs.rust-bin.nightly."2026-10-28".default.override {
+          targets = [ "riscv64gc-unknown-none-elf" ];
+          extensions = [
+            "llvm-tools-preview"
+            "rust-src"
+          ];
+        };
 
         rustsbi-prototyper = craneLib.buildPackage {
           src = craneLib.cleanCargoSource rustsbi-src;
