@@ -58,16 +58,15 @@
         "systems": "systems_2"
       },
       "locked": {
-        "lastModified": 1794731952,
-        "narHash": "sha256-lvxo1RkEKCudY5pbRVhCDWXBmJuqubGDq44HYGDiS84=",
+        "lastModified": 1794785951,
+        "narHash": "sha256-GIBBVAlPND6NJMlEOKc1wClmwiTXRlh2RvA+7KmLSt0=",
         "ref": "refs/heads/main",
-        "rev": "1be378ae3e32f0b28ddb61f7602e3ced6e1553c9",
-        "revCount": 2,
+        "rev": "9cf3bac33c6fe8caab004e108b804f9c291b5427",
+        "revCount": 3,
         "type": "git",
         "url": "ssh://git@git.my.home/phantato/nix-pins"
       },
       "original": {
-        "rev": "1be378ae3e32f0b28ddb61f7602e3ced6e1553c9",
         "type": "git",
         "url": "ssh://git@git.my.home/phantato/nix-pins"
       }
