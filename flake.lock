@@ -64,11 +64,11 @@
         "rev": "9cf3bac33c6fe8caab004e108b804f9c291b5427",
         "revCount": 3,
         "type": "git",
-        "url": "ssh://git@git.my.home/phantato/nix-pins"
+        "url": "https://git.my.home/phantato/nix-pins"
       },
       "original": {
         "type": "git",
-        "url": "ssh://git@git.my.home/phantato/nix-pins"
+        "url": "https://git.my.home/phantato/nix-pins"
       }
     },
     "root": {

@@ -2,7 +2,7 @@
   description = "Development flake for ruscv (provides Rust toolchain and QEMU)";
 
   inputs = {
-    pins.url = "git+ssh://git@git.my.home/phantato/nix-pins";
+    pins.url = "git+https://git.my.home/phantato/nix-pins";
     nixpkgs.follows = "pins/nixpkgs";
     flake-utils.follows = "pins/flake-utils";
     rust-overlay.follows = "pins/rust-overlay";
